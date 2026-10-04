@@ -5,11 +5,13 @@ the notification URLs of [Apprise](https://github.com/caronc/apprise)
 (`tgram://...`, `discord://...`, `ntfy://...`) and turns them into HTTP
 requests. A tocsin is an alarm bell.
 
-**Status: before the first release.** Nothing is published on crates.io yet.
+**Status: version 0.1.** The library is on [crates.io](https://crates.io/crates/tocsin)
+(`cargo add tocsin`) and its documentation is on [docs.rs](https://docs.rs/tocsin).
 Eleven services work today: Telegram, Discord, ntfy, Gotify, Slack, Mattermost,
 Rocket.Chat, Pushover, Microsoft Teams (workflows), and a JSON and a form
 webhook. Apprise has over a hundred, so check the list below before you depend
-on this.
+on this. Nothing has been sent to the real services in anyone's production yet:
+the tests use a local server and compare the URLs with Apprise.
 
 ## Why it exists
 
@@ -30,6 +32,8 @@ Three more things it tries to do well:
   pair and all of them; CI repeats the same).
 
 ## Command line
+
+The command line is not on crates.io yet; build it from a clone:
 
 ```sh
 cargo install --path crates/tocsin-cli     # installs `tocsin`
