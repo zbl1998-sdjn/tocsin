@@ -8,6 +8,8 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 authors = ["tocsin contributors"]
+repository = "https://github.com/zbl1998-sdjn/tocsin"
+homepage = "https://github.com/zbl1998-sdjn/tocsin"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
