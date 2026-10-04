@@ -1,0 +1,22 @@
+[package]
+name = "tocsin-cli"
+description = "The tocsin command line: send a notification to many services from Apprise-style URLs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+keywords = ["notification", "apprise", "cli", "alert"]
+categories = ["command-line-utilities"]
+publish = false
+
+[[bin]]
+name = "tocsin"
+path = "src/main.rs"
+
+[dependencies]
+tocsin = { path = "../tocsin", version = "0.1.0" }
+clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "env"] }
+
+[lints]
+workspace = true

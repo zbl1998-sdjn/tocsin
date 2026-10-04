@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --all-features
+
+  # Every service is an optional feature, and a helper that one service needs
+  # is dead code in a build without it. The full powerset is too large, so
+  # check each feature alone and every pair.
+  features:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+      - name: Clippy for every feature combination
+        run: >
+          cargo hack clippy -p tocsin --all-targets --no-default-features
+          --feature-powerset --depth 2
+          --exclude-features all-services,compat,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
+          -- -D warnings
+      - name: Tests for every feature combination
+        run: >
+          cargo hack test -p tocsin --no-default-features
+          --feature-powerset --depth 2
+          --exclude-features all-services,compat,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
+
+      - name: Clippy with the compat feature for each service
+        run: >
+          cargo hack clippy -p tocsin --all-targets --no-default-features
+          --features compat --each-feature
+          --exclude-features all-services,compat,ureq,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
+          -- -D warnings
+      - name: Differential tests with each service alone
+        run: >
+          cargo hack test -p tocsin --test compat --no-default-features
+          --features compat --each-feature
+          --exclude-features all-services,compat,ureq,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-features --all-targets --locked
+
+  docs:
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc -p tocsin --no-deps --all-features
+
+  # The expected Apprise answers in crates/tocsin/compat/oracle.json must be
+  # exactly what Apprise 81739e9 prints for crates/tocsin/compat/fixtures.json.
+  oracle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: caronc/apprise
+          ref: 81739e9a1187f986a09281b5d0c25c806e8152e0
+          path: apprise
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests requests-oauthlib PyYAML markdown click certifi
+      - name: Regenerate the oracle
+        run: >
+          python crates/tocsin/compat/apprise_oracle.py
+          --apprise-dir apprise --output "$RUNNER_TEMP/oracle.json"
+      - name: Compare with the committed oracle
+        run: diff -u crates/tocsin/compat/oracle.json "$RUNNER_TEMP/oracle.json"

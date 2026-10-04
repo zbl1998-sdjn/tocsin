@@ -1,0 +1,79 @@
+[package]
+name = "tocsin"
+description = "Send one notification to many services from a single URL. Reads Apprise notification URLs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+keywords = ["notification", "apprise", "alert", "telegram", "discord"]
+categories = ["network-programming", "web-programming::http-client"]
+readme = "README.md"
+include = ["src/**/*", "compat/timezones.txt", "README.md", "LICENSE-*"]
+
+[features]
+default = ["all-services", "ureq"]
+# Every service tocsin supports.
+all-services = [
+    "telegram", "discord", "ntfy", "gotify", "json", "form", "workflows",
+    "mattermost", "rocketchat", "pushover", "slack",
+]
+# A blocking HTTP transport.
+ureq = ["dep:ureq"]
+# Test-only: exposes the parsed fields so they can be compared with Apprise.
+compat = []
+
+# The services. Each lists the shared helpers it uses, which are the internal
+# features below; a helper is compiled only when a service that uses it is on.
+telegram = ["_services", "dep:regex", "_list", "_flag", "_to_map", "_paths", "_payload", "_any_host", "_format", "_merged"]
+discord = ["_services", "dep:regex", "_token", "_list", "_flag", "_raw_optional", "_to_map", "_paths", "_payload", "_any_host", "_parts"]
+ntfy = ["_services", "dep:regex", "dep:base64", "_verify", "_list", "_flag", "_raw_optional", "_paths", "_optional_host", "_parts"]
+gotify = ["_services", "_token", "_verify", "_paths", "_parts"]
+json = ["_services", "_webhook", "_parts"]
+form = ["_services", "_webhook", "dep:regex", "_parts"]
+workflows = ["_services", "_validate", "_query", "_verify", "_flag", "_to_map", "_paths", "_payload", "_parts"]
+mattermost = ["_services", "dep:regex", "_token", "_verify", "_list", "_flag", "_paths", "_format", "_merged"]
+rocketchat = ["_services", "dep:regex", "_verify", "_list", "_flag", "_paths", "_format", "_merged"]
+pushover = ["_services", "dep:regex", "_token", "_pairs", "_list", "_flag", "_paths", "_any_host", "_format", "_parts"]
+slack = ["_services", "_validate", "_list", "_flag", "_to_map", "_paths", "_payload", "_optional_host", "_format", "_parts"]
+
+# Internal features. Set by every service.
+_services = []
+# Apprise's default token validation.
+_token = []
+# Validation with a service's own regular expression.
+_validate = ["dep:regex"]
+# Apprise's check that a host name or address is valid.
+_verify = ["dep:regex"]
+# Encoding a query string value the way Python's `requests` does.
+_query = []
+# The same for a list of key and value pairs.
+_pairs = ["_query"]
+# What the JSON and form webhooks share.
+_webhook = ["_pairs", "dep:base64", "_verify", "_payload"]
+# Shared helpers of the URL grammar and of message handling.
+_list = []
+_flag = []
+_raw_optional = []
+_to_map = []
+_paths = []
+_payload = []
+_any_host = []
+_optional_host = []
+_format = []
+_merged = []
+_parts = []
+
+[dependencies]
+# `arbitrary_precision` keeps Telegram chat ids of any length exact.
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+percent-encoding = "2"
+regex = { version = "1", optional = true }
+base64 = { version = "0.22", optional = true }
+ureq = { version = "3", default-features = false, features = ["rustls"], optional = true }
+
+[dev-dependencies]
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true
