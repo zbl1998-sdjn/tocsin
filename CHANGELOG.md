@@ -17,6 +17,8 @@ First public version, not released yet.
   Mattermost, Rocket.Chat, Pushover, Microsoft Teams (workflows), a JSON webhook
   and a form webhook. The web addresses that Slack, Discord, ntfy.sh,
   Mattermost and Power Automate show are accepted too.
+- `http` feature: `TryFrom<&PreparedRequest>` for `http::Request<String>`, so an
+  async client such as `reqwest` or `hyper` can send what `prepare` builds.
 - `Notifier` and `Report` for sending to several services without stopping at
   the first failure.
 - Secrets are redacted in `Debug`, `Display`, errors and `tracing` fields.
@@ -26,7 +28,9 @@ First public version, not released yet.
   (usage error or invalid URL).
 - Differential tests against Apprise 81739e9: nearly 400 URLs, every parsed
   field compared, with a script and CI job that regenerate the expected
-  answers. Deliberate differences are recorded in the fixtures.
+  answers. Deliberate differences are recorded in the fixtures. A second test
+  damages every fixture URL about 24,000 times in all and checks that parsing
+  never panics.
 
 ### Known gaps
 
@@ -34,5 +38,6 @@ First public version, not released yet.
   nothing: Rocket.Chat with a user name and password, Mattermost bot channels
   written as names, Slack e-mail targets. Pushover end-to-end encryption is not
   implemented, and a URL that asks for it sends nothing.
-- No attachments, body format conversion, retries or async transport.
+- No attachments, body format conversion, retries or built-in async transport
+  (the `http` feature hands requests to one).
 - The minimum supported Rust version, 1.85, is not yet checked by a build.

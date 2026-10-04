@@ -336,6 +336,7 @@ name = "tocsin"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "http",
  "percent-encoding",
  "regex",
  "serde_json",

@@ -155,6 +155,29 @@ impl fmt::Display for PreparedRequest {
     }
 }
 
+/// Hand a request to any client that speaks the `http` crate, such as `hyper`
+/// or, through `reqwest::Request::try_from`, `reqwest`.
+///
+/// Headers, method, URL and body carry over. The [`RequestPolicy`] does not:
+/// timeouts, redirects and certificate checks belong to the client you send it
+/// with, so set them there.
+#[cfg(feature = "http")]
+impl TryFrom<&PreparedRequest> for http::Request<String> {
+    type Error = crate::TransportError;
+
+    fn try_from(request: &PreparedRequest) -> Result<Self, Self::Error> {
+        let mut builder = http::Request::builder()
+            .method(request.method.as_str())
+            .uri(request.url.expose());
+        for (name, value) in &request.headers {
+            builder = builder.header(name, value.expose());
+        }
+        builder
+            .body(request.body.expose().to_owned())
+            .map_err(|_| crate::TransportError::InvalidRequest)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,5 +191,29 @@ mod tests {
         assert_eq!(request.summary(), "POST https://example.com:8443");
         let output = format!("{request:?} {request}");
         assert!(!output.contains("FAKE_pass") && !output.contains("FAKE_token"));
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn converts_to_an_http_request() {
+        let mut request = PreparedRequest::json(
+            "https://example.com/hook?token=FAKE_token",
+            &serde_json::json!({"a": 1}),
+        );
+        request.method = Method::Put;
+        request
+            .headers
+            .insert("X-Key".into(), SecretString::new("FAKE_header"));
+        let converted = http::Request::try_from(&request).expect("valid request");
+        assert_eq!(converted.method(), http::Method::PUT);
+        assert_eq!(converted.uri(), "https://example.com/hook?token=FAKE_token");
+        assert_eq!(converted.headers()["x-key"], "FAKE_header");
+        assert_eq!(converted.body(), r#"{"a":1}"#);
+
+        request.url = SecretString::new("not a url");
+        assert_eq!(
+            http::Request::try_from(&request).expect_err("bad URL"),
+            crate::TransportError::InvalidRequest
+        );
     }
 }

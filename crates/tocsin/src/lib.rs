@@ -50,6 +50,28 @@
 //! # fn main() {}
 //! ```
 //!
+//! With the `http` feature a request also converts to an [`http::Request`], which
+//! `hyper` takes as it is and `reqwest` takes through
+//! `reqwest::Request::try_from`. Timeouts, redirects and certificate checks
+//! are the client's to set.
+//!
+//! ```
+//! # #[cfg(all(feature = "ntfy", feature = "http"))]
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use tocsin::{Notification, Service};
+//!
+//! let service: Service = "ntfy://my-topic".parse()?;
+//! for request in service.prepare(&Notification::new("Disk almost full")) {
+//!     let request = http::Request::try_from(&request)?;
+//!     assert_eq!(request.method(), http::Method::POST);
+//!     assert_eq!(request.uri(), "https://ntfy.sh/");
+//! }
+//! # Ok(())
+//! # }
+//! # #[cfg(not(all(feature = "ntfy", feature = "http")))]
+//! # fn main() {}
+//! ```
+//!
 //! # Secrets
 //!
 //! URLs, tokens, request bodies and the notification text never appear in
@@ -62,6 +84,7 @@
 //! |---|---|---|
 //! | `telegram`, `discord`, `ntfy`, `gotify`, `json`, `form`, `workflows`, `mattermost`, `rocketchat`, `pushover`, `slack` | yes (via `all-services`) | that service |
 //! | `ureq` | yes | [`UreqTransport`], a blocking HTTP transport |
+//! | `http` | no | `TryFrom<&PreparedRequest>` for `http::Request<String>` |
 //! | `compat` | no | test-only access to parsed fields |
 //!
 //! For the smallest build, use `default-features = false` and pick what you

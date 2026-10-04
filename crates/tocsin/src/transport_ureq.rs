@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use ureq::http::Request;
+
 use crate::{Method, PreparedRequest, Response, Transport, TransportError};
 
 /// Sends requests with [`ureq`], verifying TLS with the bundled web PKI roots.
@@ -47,9 +49,7 @@ impl Transport for UreqTransport {
             .max_redirects(if policy.redirects { 5 } else { 0 })
             .build();
         let agent: ureq::Agent = config.into();
-        let mut builder = ureq::http::Request::builder()
-            .method(request.method.as_str())
-            .uri(url);
+        let mut builder = Request::builder().method(request.method.as_str()).uri(url);
         for (name, value) in &request.headers {
             builder = builder.header(name, value.expose());
         }

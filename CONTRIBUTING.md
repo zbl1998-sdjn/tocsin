@@ -27,6 +27,10 @@ cargo hack test -p tocsin --no-default-features \
 The features that start with an underscore are internal helpers that a service
 switches on, so they are left out of the combinations.
 
+`TOCSIN_FUZZ_ROUNDS=4000 cargo test -p tocsin --all-features --test robustness`
+damages each fixture URL that many times and checks that nothing panics; the
+default is 60.
+
 Tests never touch the network: parsing and request building are pure, the CLI
 tests use `--dry-run` or a server on `127.0.0.1`, and fixtures use fake secrets
 that start with `FAKE_`.

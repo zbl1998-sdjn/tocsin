@@ -47,6 +47,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --all-features
+      - name: Damaged URLs never panic
+        run: cargo test -p tocsin --all-features --test robustness
+        env:
+          TOCSIN_FUZZ_ROUNDS: "1000"
 
   # Every service is an optional feature, and a helper that one service needs
   # is dead code in a build without it. The full powerset is too large, so

@@ -66,7 +66,8 @@ if !report.is_success() {
 }
 ```
 
-To use your own HTTP client, build the requests and send them yourself:
+To use your own HTTP client, build the requests and send them yourself (the `http`
+feature turns each one into an `http::Request`):
 
 ```rust
 let service: tocsin::Service = "ntfys://user:password@ntfy.example.com/alerts".parse()?;
@@ -120,7 +121,9 @@ the case where the URL is the configuration.
 `default-features = false, features = ["ntfy", "ureq"]`. `ureq` provides
 `UreqTransport`, a blocking client using rustls with the bundled web PKI roots;
 it honours `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` and refuses `verify=no`.
-The `compat` feature is for tests only.
+With the `http` feature, a prepared request converts to an `http::Request`, which `hyper`
+takes as it is and `reqwest` takes through `reqwest::Request::try_from`. The `compat` feature
+is for tests only.
 
 ## Security
 

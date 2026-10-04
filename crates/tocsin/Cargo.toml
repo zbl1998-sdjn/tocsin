@@ -9,7 +9,7 @@ authors.workspace = true
 keywords = ["notification", "apprise", "alert", "telegram", "discord"]
 categories = ["network-programming", "web-programming::http-client"]
 readme = "README.md"
-include = ["src/**/*", "compat/timezones.txt", "README.md", "LICENSE-*"]
+include = ["src/**/*", "examples/**/*", "compat/timezones.txt", "README.md", "LICENSE-*"]
 
 [features]
 default = ["all-services", "ureq"]
@@ -20,6 +20,8 @@ all-services = [
 ]
 # A blocking HTTP transport.
 ureq = ["dep:ureq"]
+# `TryFrom<&PreparedRequest>` for `http::Request<String>`, for async clients.
+http = ["dep:http"]
 # Test-only: exposes the parsed fields so they can be compared with Apprise.
 compat = []
 
@@ -70,10 +72,18 @@ serde_json = { version = "1", features = ["arbitrary_precision"] }
 percent-encoding = "2"
 regex = { version = "1", optional = true }
 base64 = { version = "0.22", optional = true }
+http = { version = "1", optional = true }
 ureq = { version = "3", default-features = false, features = ["rustls"], optional = true }
 
 [dev-dependencies]
 tracing = { version = "0.1", default-features = false, features = ["std"] }
+
+[[example]]
+name = "preview"
+required-features = ["_services"]
+
+[package.metadata.docs.rs]
+features = ["http"]
 
 [lints]
 workspace = true
