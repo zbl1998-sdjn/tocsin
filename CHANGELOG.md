@@ -42,3 +42,6 @@ both on crates.io.
 - No attachments, body format conversion, retries or built-in async transport
   (the `http` feature hands requests to one).
 - The minimum supported Rust version, 1.85, is not yet checked by a build.
+
+[Unreleased]: https://github.com/zbl1998-sdjn/tocsin/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/zbl1998-sdjn/tocsin/releases/tag/v0.1.0
