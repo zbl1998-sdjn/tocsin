@@ -455,7 +455,7 @@ fn form_webhook_body_renames_and_get_query() {
         requests[0].url.expose(),
         "http://localhost/api?version=1.0&title=Title&message=Body&type=info&b=2"
     );
-    assert!(requests[0].body.expose().is_empty());
+    assert_eq!(requests[0].body.expose(), "");
     assert!(!requests[0].headers.contains_key("Content-Type"));
     assert!(!format!("{service:?} {requests:?}").contains("FAKE_header"));
 }

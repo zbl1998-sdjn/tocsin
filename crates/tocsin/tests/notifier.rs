@@ -65,7 +65,7 @@ fn a_service_with_nothing_to_send_is_reported() {
 fn an_empty_notifier_is_not_a_success() {
     let report = Notifier::new().send(&Notification::new("hi"), &mut MockTransport::default());
     assert!(!report.is_success());
-    assert!(report.receipts().is_empty());
+    assert_eq!(report.receipts().len(), 0);
 }
 
 #[test]

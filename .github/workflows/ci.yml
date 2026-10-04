@@ -68,25 +68,25 @@ jobs:
           tool: cargo-hack
       - name: Clippy for every feature combination
         run: >
-          cargo hack clippy -p tocsin --all-targets --no-default-features
+          cargo hack clippy -p tocsin --all-targets
           --feature-powerset --depth 2
           --exclude-features all-services,compat,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
           -- -D warnings
       - name: Tests for every feature combination
         run: >
-          cargo hack test -p tocsin --no-default-features
+          cargo hack test -p tocsin
           --feature-powerset --depth 2
           --exclude-features all-services,compat,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
 
       - name: Clippy with the compat feature for each service
         run: >
-          cargo hack clippy -p tocsin --all-targets --no-default-features
+          cargo hack clippy -p tocsin --all-targets
           --features compat --each-feature
           --exclude-features all-services,compat,ureq,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
           -- -D warnings
       - name: Differential tests with each service alone
         run: >
-          cargo hack test -p tocsin --test compat --no-default-features
+          cargo hack test -p tocsin --test compat
           --features compat --each-feature
           --exclude-features all-services,compat,ureq,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
 

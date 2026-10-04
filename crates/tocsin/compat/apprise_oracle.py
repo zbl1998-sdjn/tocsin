@@ -179,7 +179,8 @@ def main():
               "network_attempts": NETWORK_ATTEMPTS,
               "network_details": NETWORK_DETAILS,
               "rows": rows}
-    args.output.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n",
+                           encoding="utf-8", newline="\n")
     print(f"fixtures={len(rows)} legal={sum(r['valid'] for r in rows)} "
           f"illegal={sum(not r['valid'] for r in rows)} network_attempts={NETWORK_ATTEMPTS}")
     if NETWORK_ATTEMPTS:
