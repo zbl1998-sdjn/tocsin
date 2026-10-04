@@ -82,13 +82,13 @@ jobs:
         run: >
           cargo hack clippy -p tocsin --all-targets
           --features compat --each-feature
-          --exclude-features all-services,compat,ureq,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
+          --exclude-features all-services,ureq,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
           -- -D warnings
       - name: Differential tests with each service alone
         run: >
           cargo hack test -p tocsin --test compat
           --features compat --each-feature
-          --exclude-features all-services,compat,ureq,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
+          --exclude-features all-services,ureq,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
 
   msrv:
     runs-on: ubuntu-latest
