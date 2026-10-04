@@ -6,8 +6,8 @@ follows [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [0.1.0] - 2026-10-05
 
-First public version of the `tocsin` library, on crates.io. The command line is
-in the repository and is not published yet.
+First public version: the `tocsin` library and the `tocsin-cli` command line,
+both on crates.io.
 
 ### Added
 

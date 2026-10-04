@@ -33,10 +33,8 @@ Three more things it tries to do well:
 
 ## Command line
 
-The command line is not on crates.io yet; build it from a clone:
-
 ```sh
-cargo install --path crates/tocsin-cli     # installs `tocsin`
+cargo install tocsin-cli                 # installs `tocsin`
 
 tocsin -b "Backup finished" -t nightly ntfy://my-topic
 echo "disk is 95% full" | tocsin -n warning "tgram://<bot_token>/<chat_id>"

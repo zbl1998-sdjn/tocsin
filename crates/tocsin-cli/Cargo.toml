@@ -10,7 +10,8 @@ repository.workspace = true
 homepage.workspace = true
 keywords = ["notification", "apprise", "cli", "alert"]
 categories = ["command-line-utilities"]
-publish = false
+readme = "README.md"
+include = ["src/**/*", "README.md", "LICENSE-*"]
 
 [[bin]]
 name = "tocsin"
