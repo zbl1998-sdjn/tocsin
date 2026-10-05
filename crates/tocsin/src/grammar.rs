@@ -370,6 +370,10 @@ fn timezone(name: &str) -> Result<String, ParseError> {
 pub(crate) struct Raw {
     pub(crate) options: Options,
     /// Query arguments with lower-cased keys, percent-decoded and trimmed.
+    #[cfg_attr(
+        feature = "serverchan",
+        allow(dead_code, reason = "ServerChan reads no argument, only the URL")
+    )]
     pub(crate) query: BTreeMap<String, String>,
     /// Arguments written as `:key=value`.
     #[cfg_attr(
@@ -404,6 +408,10 @@ pub(crate) struct Raw {
     /// The host exactly as written, without percent-decoding.
     #[cfg(feature = "ntfy")]
     pub(crate) original_host: String,
+    /// The user as the plugin of Apprise gets it from `parse_url`: not
+    /// percent-decoded, which only the base class does later.
+    #[cfg(feature = "dingtalk")]
+    pub(crate) original_user: Option<String>,
 }
 
 impl Raw {
@@ -484,6 +492,8 @@ pub(crate) fn parse(input: &str, hosts: Hosts, formats: FormatMode) -> Result<Ra
     #[cfg(not(feature = "_verify"))]
     let _ = bad_port;
     apply_credential_overrides(&query, &mut user, &mut password);
+    #[cfg(feature = "dingtalk")]
+    let original_user = user.clone();
     let options = options_from(scheme, (host, port), (user, password), &query, formats)?;
     // Apprise decodes the path once and quotes it again. That leaves the slash
     // as the only separator: `%2F` splits a segment, while spaces, commas and
@@ -504,6 +514,8 @@ pub(crate) fn parse(input: &str, hosts: Hosts, formats: FormatMode) -> Result<Ra
         paths,
         #[cfg(feature = "ntfy")]
         original_host: original_host.to_owned(),
+        #[cfg(feature = "dingtalk")]
+        original_user,
     })
 }
 

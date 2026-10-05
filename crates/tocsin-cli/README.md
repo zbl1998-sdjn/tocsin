@@ -32,10 +32,10 @@ message from the hook's own payload; the agent's text is added only with
 Claude Code hook. See the [repository](https://github.com/zbl1998-sdjn/tocsin)
 for the settings.
 
-Twenty-one services are supported: Telegram, Discord, ntfy, Gotify, Slack,
+Twenty-six services are supported: Telegram, Discord, ntfy, Gotify, Slack,
 Mattermost, Rocket.Chat, Pushover, Pushbullet, Prowl, IFTTT, Zulip, PagerDuty,
-Google Chat, Bark, Signal, Home Assistant, Microsoft Teams (workflows), and a
-JSON, an XML and a form webhook.
+Google Chat, Bark, Signal, Home Assistant, Feishu, Lark, WeCom, ServerChan,
+DingTalk, Microsoft Teams (workflows), and a JSON, an XML and a form webhook.
 See the [repository](https://github.com/zbl1998-sdjn/tocsin) for
 the options each one applies and how tocsin differs from Apprise.
 

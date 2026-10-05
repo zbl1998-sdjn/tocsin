@@ -49,6 +49,16 @@ enum Inner {
     SignalApi(crate::services::signal::SignalApi),
     #[cfg(feature = "homeassistant")]
     HomeAssistant(crate::services::homeassistant::HomeAssistant),
+    #[cfg(feature = "feishu")]
+    Feishu(crate::services::feishu::Feishu),
+    #[cfg(feature = "lark")]
+    Lark(crate::services::lark::Lark),
+    #[cfg(feature = "wecombot")]
+    WeComBot(crate::services::wecombot::WeComBot),
+    #[cfg(feature = "serverchan")]
+    ServerChan(crate::services::serverchan::ServerChan),
+    #[cfg(feature = "dingtalk")]
+    DingTalk(crate::services::dingtalk::DingTalk),
 }
 
 /// One notification destination, parsed from an Apprise-compatible URL such as
@@ -162,6 +172,21 @@ impl Service {
             #[cfg(feature = "homeassistant")]
             "hassio" | "hassios" => crate::services::homeassistant::parse(input)
                 .map(|(options, service)| Self::new(options, Inner::HomeAssistant(service))),
+            #[cfg(feature = "feishu")]
+            "feishu" => crate::services::feishu::parse(input)
+                .map(|(options, service)| Self::new(options, Inner::Feishu(service))),
+            #[cfg(feature = "lark")]
+            "lark" => crate::services::lark::parse(input)
+                .map(|(options, service)| Self::new(options, Inner::Lark(service))),
+            #[cfg(feature = "wecombot")]
+            "wecombot" => crate::services::wecombot::parse(input)
+                .map(|(options, service)| Self::new(options, Inner::WeComBot(service))),
+            #[cfg(feature = "serverchan")]
+            "schan" => crate::services::serverchan::parse(input)
+                .map(|(options, service)| Self::new(options, Inner::ServerChan(service))),
+            #[cfg(feature = "dingtalk")]
+            "dingtalk" => crate::services::dingtalk::parse(input)
+                .map(|(options, service)| Self::new(options, Inner::DingTalk(service))),
             _ => Err(ParseError::UnsupportedService),
         }
     }
@@ -217,6 +242,16 @@ impl Service {
             Inner::SignalApi(_) => "signal",
             #[cfg(feature = "homeassistant")]
             Inner::HomeAssistant(_) => "homeassistant",
+            #[cfg(feature = "feishu")]
+            Inner::Feishu(_) => "feishu",
+            #[cfg(feature = "lark")]
+            Inner::Lark(_) => "lark",
+            #[cfg(feature = "wecombot")]
+            Inner::WeComBot(_) => "wecombot",
+            #[cfg(feature = "serverchan")]
+            Inner::ServerChan(_) => "serverchan",
+            #[cfg(feature = "dingtalk")]
+            Inner::DingTalk(_) => "dingtalk",
         }
     }
 
@@ -284,6 +319,16 @@ impl Service {
             Inner::SignalApi(ref service) => service.prepare(&self.options, notification),
             #[cfg(feature = "homeassistant")]
             Inner::HomeAssistant(ref service) => service.prepare(&self.options, notification),
+            #[cfg(feature = "feishu")]
+            Inner::Feishu(ref service) => service.prepare(&self.options, notification),
+            #[cfg(feature = "lark")]
+            Inner::Lark(ref service) => service.prepare(&self.options, notification),
+            #[cfg(feature = "wecombot")]
+            Inner::WeComBot(ref service) => service.prepare(&self.options, notification),
+            #[cfg(feature = "serverchan")]
+            Inner::ServerChan(ref service) => service.prepare(&self.options, notification),
+            #[cfg(feature = "dingtalk")]
+            Inner::DingTalk(ref service) => service.prepare(&self.options, notification),
         }
     }
 
@@ -369,6 +414,16 @@ impl Service {
             Inner::SignalApi(ref service) => service.compat(&mut map),
             #[cfg(feature = "homeassistant")]
             Inner::HomeAssistant(ref service) => service.compat(&mut map),
+            #[cfg(feature = "feishu")]
+            Inner::Feishu(ref service) => service.compat(&mut map),
+            #[cfg(feature = "lark")]
+            Inner::Lark(ref service) => service.compat(&mut map),
+            #[cfg(feature = "wecombot")]
+            Inner::WeComBot(ref service) => service.compat(&mut map),
+            #[cfg(feature = "serverchan")]
+            Inner::ServerChan(ref service) => service.compat(&mut map),
+            #[cfg(feature = "dingtalk")]
+            Inner::DingTalk(ref service) => service.compat(&mut map),
         }
         serde_json::Value::Object(map)
     }

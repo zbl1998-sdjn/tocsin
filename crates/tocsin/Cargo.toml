@@ -18,7 +18,7 @@ default = ["all-services", "ureq"]
 # Every service tocsin supports.
 all-services = [
     "telegram", "discord", "ntfy", "gotify", "json", "form", "workflows",
-    "mattermost", "rocketchat", "pushover", "slack", "prowl", "ifttt", "pushbullet", "zulip", "xml", "pagerduty", "gchat", "bark", "signal", "homeassistant",
+    "mattermost", "rocketchat", "pushover", "slack", "prowl", "ifttt", "pushbullet", "zulip", "xml", "pagerduty", "gchat", "bark", "signal", "homeassistant", "feishu", "lark", "wecombot", "serverchan", "dingtalk",
 ]
 # A blocking HTTP transport.
 ureq = ["dep:ureq"]
@@ -49,6 +49,11 @@ prowl = ["_services", "_validate", "_pairs", "_paths", "_any_host", "_parts"]
 bark = ["_services", "_basic", "_verify", "_flag", "_list", "_paths", "_parts"]
 signal = ["_services", "dep:regex", "dep:base64", "_basic", "_flag", "_paths", "_any_host", "_format", "_merged"]
 homeassistant = ["_services", "dep:regex", "_token", "_validate", "_list", "_flag", "_paths", "_any_host", "_parts"]
+feishu = ["_services", "_validate", "_quote", "_optional_host", "_format", "_merged"]
+lark = ["_services", "_native", "_validate", "_quote", "_optional_host", "_parts"]
+wecombot = ["_services", "_native", "_validate", "_query", "_optional_host", "_format", "_merged"]
+serverchan = ["_services", "_validate", "_pairs", "_optional_host", "_parts"]
+dingtalk = ["_services", "dep:base64", "_hmac", "_validate", "_quote", "_query", "_list", "_paths", "_optional_host", "_format", "_parts"]
 slack = ["_services", "_email", "_channels", "_native", "_sequence", "_lookups", "_multipart", "_validate", "_query", "_list", "_flag", "_to_map", "_paths", "_payload", "_optional_host", "_format", "_parts"]
 
 # Internal features. Set by every service.
@@ -82,6 +87,8 @@ _pairs = ["_query", "_pairs_iter"]
 # What the JSON and form webhooks share.
 _webhook = ["_pairs", "dep:base64", "_verify", "_payload"]
 _basic = ["dep:base64"]
+# HMAC-SHA256, for the request signature of DingTalk.
+_hmac = []
 # Shared helpers of the URL grammar and of message handling.
 _list = []
 _flag = []

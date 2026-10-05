@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- Feishu (`feishu://`), Lark (`lark://` and the `open.larksuite.com` address),
+  WeCom bot (`wecombot://` and the `qyapi.weixin.qq.com` address), ServerChan
+  (`schan://`) and DingTalk (`dingtalk://`, with the secret signature and the
+  mentioned phone numbers), each with at least 60 fixtures that agree with
+  Apprise. Their differences are in `DESIGN.md`. They have only met the local
+  test server.
+- HMAC-SHA256 for the DingTalk signature, in the crate itself.
+
 ## [0.3.0] - 2026-10-05
 
 ### Added

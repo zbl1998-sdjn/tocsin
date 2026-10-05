@@ -68,10 +68,27 @@ static GCHAT: LazyLock<Regex> = LazyLock::new(|| {
     .expect("static regex")
 });
 
+#[cfg(feature = "lark")]
+static LARK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^https://open\.larksuite\.com/open-apis/bot/v2/hook/([\w-]+)$")
+        .expect("static regex")
+});
+#[cfg(feature = "wecombot")]
+static WECOMBOT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)^https?://qyapi\.weixin\.qq\.com/cgi-bin/webhook/send/?\?key=(?P<key>[A-Z0-9_\x{130}\x{131}-]+)/?&?(?P<params>.+)?$",
+    )
+    .expect("static regex")
+});
+
 /// The notification URL for a web address, if a service claims it.
 #[allow(
     unused_variables,
     reason = "without a service that has web addresses there is nothing to match"
+)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one list of the web addresses, a short arm for each service"
 )]
 pub(crate) fn rewrite(url: &str) -> Option<String> {
     #[cfg(feature = "discord")]
@@ -126,6 +143,20 @@ pub(crate) fn rewrite(url: &str) -> Option<String> {
             &found["host"],
             found.name("port").map_or("", |m| m.as_str()),
             &found["workflow"],
+        ));
+    }
+    #[cfg(feature = "lark")]
+    if let Some(found) = LARK.captures(url) {
+        return Some(format!("lark://{}", &found[1]));
+    }
+    #[cfg(feature = "wecombot")]
+    if let Some(found) = WECOMBOT.captures(url) {
+        return Some(format!(
+            "wecombot://{}{}",
+            &found["key"],
+            found
+                .name("params")
+                .map_or_else(String::new, |params| format!("?{}", params.as_str()))
         ));
     }
     #[cfg(feature = "mattermost")]

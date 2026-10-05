@@ -92,7 +92,12 @@ def normalize(obj):
                     "NotifyGoogleChat": "gchat",
                     "NotifyBark": "bark",
                     "NotifySignalAPI": "signal",
-                    "NotifyHomeAssistant": "homeassistant"}[type(obj).__name__],
+                    "NotifyHomeAssistant": "homeassistant",
+                    "NotifyFeishu": "feishu",
+                    "NotifyLark": "lark",
+                    "NotifyWeComBot": "wecombot",
+                    "NotifyServerChan": "serverchan",
+                    "NotifyDingTalk": "dingtalk"}[type(obj).__name__],
         "host": obj.host, "port": obj.port, "user": obj.user,
         "password": obj.password, "secure": obj.secure,
         "format": list(obj.notify_format) if isinstance(obj.notify_format, tuple)
@@ -205,6 +210,12 @@ def normalize(obj):
         base.update(accesstoken=obj.accesstoken, nid=obj.nid, batch=obj.batch,
                     targets=[[d, s, list(t)] for d, s, t in obj.targets],
                     invalid_targets=list(obj._invalid_targets), prefix=obj.prefix)
+    elif base["service"] in ("feishu", "lark", "serverchan"):
+        base.update(token=obj.token)
+    elif base["service"] == "wecombot":
+        base.update(key=obj.key)
+    elif base["service"] == "dingtalk":
+        base.update(token=obj.token, secret=obj.secret, targets=list(obj.targets))
     elif base["service"] == "json":
         base.update(method=obj.method, path=obj.fullpath, headers=obj.headers,
                     params=obj.params, payload=obj.payload_extras)

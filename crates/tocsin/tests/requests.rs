@@ -1322,6 +1322,183 @@ fn home_assistant_ends_a_list_of_identities_where_apprise_does() {
     );
 }
 
+#[cfg(feature = "feishu")]
+#[test]
+fn feishu_posts_the_title_and_the_text_as_one_message() {
+    let service: Service = "feishu://tok-en_1".parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].url.expose(),
+        "https://open.feishu.cn/open-apis/bot/v2/hook/tok-en_1/"
+    );
+    assert_eq!(
+        body(&requests[0]),
+        json!({"msg_type": "text", "content": {"text": "Title\r\nBody"}})
+    );
+    // A text longer than Feishu takes is split at a space when asked to be.
+    let long = "word ".repeat(10_000);
+    let service: Service = "feishu://tok?overflow=split".parse().expect("parse");
+    let requests = service.prepare(&Notification::new(long));
+    assert!(requests.len() >= 3, "{}", requests.len());
+    for request in &requests {
+        let text = body(request)["content"]["text"]
+            .as_str()
+            .expect("text")
+            .to_owned();
+        assert!(text.chars().count() <= 19985);
+    }
+}
+
+#[cfg(feature = "lark")]
+#[test]
+fn lark_puts_the_title_on_a_line_of_its_own() {
+    let service: Service = "lark://abcd-1234".parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].url.expose(),
+        "https://open.larksuite.com/open-apis/bot/v2/hook/abcd-1234"
+    );
+    assert_eq!(
+        body(&requests[0]),
+        json!({"msg_type": "text", "content": {"text": "Title\nBody"}})
+    );
+    let body_only = service.prepare(&Notification::new("Body"));
+    assert_eq!(body(&body_only[0])["content"]["text"], "Body");
+    // The address that Lark shows for the bot works as it is, and gives the same.
+    let native: Service = "https://open.larksuite.com/open-apis/bot/v2/hook/abcd-1234"
+        .parse()
+        .expect("parse");
+    assert_eq!(
+        native.prepare(&notification("Body"))[0].url.expose(),
+        requests[0].url.expose()
+    );
+}
+
+#[cfg(feature = "wecombot")]
+#[test]
+fn wecombot_posts_a_text_message_to_the_key() {
+    let service: Service = "wecombot://bot-key_1".parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].url.expose(),
+        "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=bot-key_1"
+    );
+    assert_eq!(
+        body(&requests[0]),
+        json!({"msgtype": "text", "text": {"content": "Title\r\nBody"}})
+    );
+    // The address that WeCom shows for the bot works as it is.
+    let native: Service = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=bot-key_1"
+        .parse()
+        .expect("parse");
+    assert_eq!(
+        native.prepare(&notification("Body"))[0].url.expose(),
+        requests[0].url.expose()
+    );
+}
+
+#[cfg(feature = "serverchan")]
+#[test]
+fn serverchan_posts_a_form_with_the_title_and_the_text() {
+    let service: Service = "schan://abc123".parse().expect("parse");
+    let requests = service.prepare(&notification("Body & more"));
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].url.expose(),
+        "https://sctapi.ftqq.com/abc123.send"
+    );
+    assert_eq!(
+        requests[0].headers["Content-Type"].expose(),
+        "application/x-www-form-urlencoded"
+    );
+    assert_eq!(requests[0].body.text(), "title=Title&desp=Body+%26+more");
+    // Apprise reads the token up to the first character that is not a letter or
+    // a digit, so the dash ends it.
+    let service: Service = "schan://abc-def".parse().expect("parse");
+    assert_eq!(
+        service.prepare(&notification("Body"))[0].url.expose(),
+        "https://sctapi.ftqq.com/abc.send"
+    );
+}
+
+#[cfg(feature = "dingtalk")]
+#[test]
+fn dingtalk_posts_text_and_mentions_the_phone_numbers() {
+    let url =
+        "dingtalk://abc123/13800138000/%2B8613900139000/1234567890?to=13700137000,13800138000";
+    let service: Service = url.parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].url.expose(),
+        "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+    );
+    // Sorted as they are written (a plus sign comes first), without the
+    // duplicate and without the number that is too short.
+    assert_eq!(
+        body(&requests[0]),
+        json!({
+            "msgtype": "text",
+            "at": {"atMobiles": ["8613900139000", "13700137000", "13800138000"], "isAtAll": false},
+            "text": {"content": "Title\r\nBody"},
+        })
+    );
+}
+
+#[cfg(feature = "dingtalk")]
+#[test]
+fn dingtalk_sends_markdown_with_a_cleaned_title() {
+    let service: Service = "dingtalk://abc123?format=markdown".parse().expect("parse");
+    let requests = service.prepare(&Notification::new("Body").title("## Big   - title"));
+    assert_eq!(
+        body(&requests[0]),
+        json!({
+            "msgtype": "markdown",
+            "at": {"atMobiles": [], "isAtAll": false},
+            "markdown": {"title": "Big - title", "text": "# Big - title\nBody"},
+        })
+    );
+    // Without a title the application name stands in, and the text is the body.
+    let requests = service.prepare(&Notification::new("Body"));
+    assert_eq!(
+        body(&requests[0])["markdown"],
+        json!({"title": "tocsin", "text": "Body"})
+    );
+}
+
+#[cfg(feature = "dingtalk")]
+#[test]
+fn dingtalk_signs_the_request_when_it_has_a_secret() {
+    let service: Service = "dingtalk://SECabc@abc123".parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    let url = requests[0].url.expose().to_owned();
+    let rest = url
+        .strip_prefix("https://oapi.dingtalk.com/robot/send?access_token=abc123&timestamp=")
+        .unwrap_or_else(|| panic!("{url}"));
+    let (timestamp, signature) = rest.split_once("&sign=").expect("a signature");
+    // Milliseconds since the epoch, and a base64 SHA-256 with its padding escaped.
+    assert_eq!(timestamp.len(), 13, "{timestamp}");
+    assert!(timestamp.chars().all(|c| c.is_ascii_digit()));
+    assert!(signature.ends_with("%3D"), "{signature}");
+    assert!(
+        signature
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '%'),
+        "{signature}"
+    );
+    // Without a secret there is nothing to sign.
+    let service: Service = "dingtalk://abc123".parse().expect("parse");
+    assert!(
+        !service.prepare(&notification("Body"))[0]
+            .url
+            .expose()
+            .contains("sign=")
+    );
+}
+
 #[cfg(feature = "_services")]
 #[test]
 fn credentials_in_urls_never_show_up_in_formatting() {
@@ -1348,6 +1525,11 @@ fn credentials_in_urls_never_show_up_in_formatting() {
         "bark://FAKE_user:FAKE_password@127.0.0.1/FAKE_token?key=FAKE_query_token",
         "signal://FAKE_user:FAKE_password@127.0.0.1/+15550001111/+15550002222?to=FAKE_query_token",
         "hassio://FAKE_user:FAKE_password@127.0.0.1/FAKE.token.value?nid=FAKE_query_token&to=svc",
+        "feishu://FAKE_token?x=FAKE_query_token",
+        "lark://FAKE-token?x=FAKE_query_token",
+        "wecombot://FAKE_botkey?x=FAKE_query_token",
+        "schan://FAKEchantoken?x=FAKE_query_token",
+        "dingtalk://FAKEsecret@FAKEdingtoken/13800138000?x=FAKE_query_token",
     ] {
         if let Ok(service) = url.parse::<Service>() {
             let requests = service.prepare(&notification("body"));
@@ -1361,6 +1543,12 @@ fn credentials_in_urls_never_show_up_in_formatting() {
                 "FAKEKEYFAKEKEY",
                 "FAKEtokenFAKEtoken",
                 "FAKE.token.value",
+                "FAKE-token",
+                "FAKE_botkey",
+                "FAKEchantoken",
+                "FAKEsecret",
+                "FAKEdingtoken",
+                "13800138000",
             ] {
                 assert!(!output.contains(secret), "{url}: leaked {secret}");
             }

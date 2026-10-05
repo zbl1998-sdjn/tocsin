@@ -183,6 +183,9 @@ The one deliberate exception is `PreparedRequest::summary`, for `--dry-run`.
 - `serde_json` (with `arbitrary_precision`, so a Telegram chat id of any length
   stays exact), `percent-encoding`, and `regex` or `base64` only for the services
   that need them.
+- HMAC-SHA256 is written out in `hmac.rs` (60 lines, the vectors of RFC 4231
+  and FIPS 180-2 in its tests) for the one service that signs its requests,
+  DingTalk, instead of adding `sha2` and `hmac`.
 - `ureq` 3 with rustls (`ring`), behind the `ureq` feature. TLS roots come from
   the bundled web PKI set, not from the operating system.
 - `tocsin-reqwest` is a separate crate, so `tocsin` itself stays free of an async
@@ -308,6 +311,24 @@ By service:
   notify services read; Apprise sends `targets`, which the schema in Home
   Assistant's `notify/const.py` does not allow (read on 2026-10-05, not tried
   against a running server).
+- Feishu, Lark, WeCom: the title goes in front of the text (Feishu and WeCom
+  have none; Lark's own line). Apprise's `re.I` takes the letters U+0130 and
+  U+0131 as `i` in a token, which the case folding of Rust does not, so they are
+  named in the patterns. The web addresses of Lark and WeCom are read like
+  Apprise reads them: the Lark address only without a trailing slash or
+  arguments, and the WeCom address only with the key first.
+- ServerChan: Apprise reads the token from the whole URL as it was written, with
+  a pattern that stops at the first character that is not a letter or a digit,
+  and that needs a slash after the token when the URL ends in one. A token with a
+  dash is therefore cut at the dash, and an upper-case scheme, a leading space or
+  a percent escape means no token. tocsin does the same, and it is tested.
+- DingTalk: the signature of a request depends on the clock, so this is the one
+  service whose `prepare` is not a pure function of the URL and the message. The
+  secret is the user of the URL as written, not decoded, which is how Apprise
+  reads it. The phone numbers are sorted as written before their digits are
+  taken, and a number with fewer than 11 or more than 14 digits is dropped. When
+  a Markdown message has no title, the title is `tocsin` where Apprise sends its
+  own name.
 
 ## Feature hygiene
 

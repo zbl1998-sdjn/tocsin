@@ -7,8 +7,12 @@
 
 #[cfg(feature = "bark")]
 pub(crate) mod bark;
+#[cfg(feature = "dingtalk")]
+pub(crate) mod dingtalk;
 #[cfg(feature = "discord")]
 pub(crate) mod discord;
+#[cfg(feature = "feishu")]
+pub(crate) mod feishu;
 #[cfg(feature = "form")]
 pub(crate) mod form;
 #[cfg(feature = "gchat")]
@@ -21,6 +25,8 @@ pub(crate) mod homeassistant;
 pub(crate) mod ifttt;
 #[cfg(feature = "json")]
 pub(crate) mod json;
+#[cfg(feature = "lark")]
+pub(crate) mod lark;
 #[cfg(feature = "mattermost")]
 pub(crate) mod mattermost;
 #[cfg(feature = "ntfy")]
@@ -35,6 +41,8 @@ pub(crate) mod pushbullet;
 pub(crate) mod pushover;
 #[cfg(feature = "rocketchat")]
 pub(crate) mod rocketchat;
+#[cfg(feature = "serverchan")]
+pub(crate) mod serverchan;
 #[cfg(feature = "signal")]
 pub(crate) mod signal;
 #[cfg(feature = "slack")]
@@ -43,6 +51,8 @@ pub(crate) mod slack;
 pub(crate) mod telegram;
 #[cfg(feature = "_webhook")]
 pub(crate) mod webhook;
+#[cfg(feature = "wecombot")]
+pub(crate) mod wecombot;
 #[cfg(feature = "workflows")]
 pub(crate) mod workflows;
 #[cfg(feature = "xml")]
