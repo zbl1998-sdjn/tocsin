@@ -17,6 +17,8 @@ pub(crate) mod json;
 pub(crate) mod mattermost;
 #[cfg(feature = "ntfy")]
 pub(crate) mod ntfy;
+#[cfg(feature = "prowl")]
+pub(crate) mod prowl;
 #[cfg(feature = "pushover")]
 pub(crate) mod pushover;
 #[cfg(feature = "rocketchat")]

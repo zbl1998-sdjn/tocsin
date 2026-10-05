@@ -720,6 +720,38 @@ fn slack_webhook_bot_blocks_and_workflow_requests() {
     );
 }
 
+#[cfg(feature = "prowl")]
+#[test]
+fn prowl_posts_a_form_to_the_public_api() {
+    let (key, provider) = ("a".repeat(40), "b".repeat(40));
+    let service: Service = format!("prowl://{key}/{provider}?priority=high")
+        .parse()
+        .expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].url.expose(),
+        "https://api.prowlapp.com/publicapi/add"
+    );
+    assert_eq!(
+        requests[0].headers["Content-Type"].expose(),
+        "application/x-www-form-urlencoded"
+    );
+    assert_eq!(
+        requests[0].body.text(),
+        format!(
+            "apikey={key}&application=tocsin&event=Title&description=Body&priority=1&providerkey={provider}"
+        )
+    );
+    // Without a provider key, and with the default priority.
+    let service: Service = format!("prowl://{key}").parse().expect("parse");
+    let body = service.prepare(&notification("Body"))[0]
+        .body
+        .text()
+        .into_owned();
+    assert!(body.ends_with("&priority=0"), "{body}");
+}
+
 #[cfg(feature = "_services")]
 #[test]
 fn credentials_in_urls_never_show_up_in_formatting() {
@@ -735,6 +767,7 @@ fn credentials_in_urls_never_show_up_in_formatting() {
         "rocket://FAKE_user:FAKE_password@127.0.0.1/%23ops?mode=token&to=FAKE_query_token",
         "pover://FAKE_user@FAKE_token/FAKE_password?url=http://127.0.0.1/FAKE_query_token",
         "slack://FAKE_user@TFAKE/BFAKE/CFAKE/FAKE_password?:key=FAKE_query_token",
+        "prowl://FAKE_user:FAKE_password@FAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKE0/FAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKE1",
     ] {
         if let Ok(service) = url.parse::<Service>() {
             let requests = service.prepare(&notification("body"));
@@ -745,6 +778,7 @@ fn credentials_in_urls_never_show_up_in_formatting() {
                 "FAKE_query_token",
                 "FAKE_token",
                 "FAKE_id",
+                "FAKEKEYFAKEKEY",
             ] {
                 assert!(!output.contains(secret), "{url}: leaked {secret}");
             }

@@ -81,7 +81,8 @@ def normalize(obj):
                     "NotifyMattermost": "mattermost",
                     "NotifyRocketChat": "rocketchat",
                     "NotifyPushover": "pushover",
-                    "NotifySlack": "slack"}[type(obj).__name__],
+                    "NotifySlack": "slack",
+                    "NotifyProwl": "prowl"}[type(obj).__name__],
         "host": obj.host, "port": obj.port, "user": obj.user,
         "password": obj.password, "secure": obj.secure,
         "format": list(obj.notify_format) if isinstance(obj.notify_format, tuple)
@@ -134,6 +135,9 @@ def normalize(obj):
         base.update(mode=obj.mode, webhook=obj.webhook, channels=obj.channels,
                     rooms=obj.rooms, users=obj.users, avatar=obj.avatar,
                     headers=obj.headers)
+    elif base["service"] == "prowl":
+        base.update(apikey=obj.apikey, providerkey=obj.providerkey,
+                    priority=obj.priority)
     elif base["service"] == "mattermost":
         base.update(mode=obj.mode, token=obj.token, path=obj.fullpath,
                     targets=[list(t) for t in obj.targets],

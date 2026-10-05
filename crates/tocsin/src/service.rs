@@ -29,6 +29,8 @@ enum Inner {
     Pushover(crate::services::pushover::Pushover),
     #[cfg(feature = "slack")]
     Slack(crate::services::slack::Slack),
+    #[cfg(feature = "prowl")]
+    Prowl(crate::services::prowl::Prowl),
 }
 
 /// One notification destination, parsed from an Apprise-compatible URL such as
@@ -112,6 +114,9 @@ impl Service {
             #[cfg(feature = "slack")]
             "slack" => crate::services::slack::parse(input)
                 .map(|(options, service)| Self::new(options, Inner::Slack(service))),
+            #[cfg(feature = "prowl")]
+            "prowl" => crate::services::prowl::parse(input)
+                .map(|(options, service)| Self::new(options, Inner::Prowl(service))),
             _ => Err(ParseError::UnsupportedService),
         }
     }
@@ -147,6 +152,8 @@ impl Service {
             Inner::Pushover(_) => "pushover",
             #[cfg(feature = "slack")]
             Inner::Slack(_) => "slack",
+            #[cfg(feature = "prowl")]
+            Inner::Prowl(_) => "prowl",
         }
     }
 
@@ -194,6 +201,8 @@ impl Service {
             Inner::Pushover(ref service) => service.prepare(&self.options, notification),
             #[cfg(feature = "slack")]
             Inner::Slack(ref service) => service.prepare(&self.options, notification),
+            #[cfg(feature = "prowl")]
+            Inner::Prowl(ref service) => service.prepare(&self.options, notification),
         }
     }
 
@@ -257,6 +266,8 @@ impl Service {
             Inner::Pushover(ref service) => service.compat(&mut map),
             #[cfg(feature = "slack")]
             Inner::Slack(ref service) => service.compat(&mut map),
+            #[cfg(feature = "prowl")]
+            Inner::Prowl(ref service) => service.compat(&mut map),
         }
         serde_json::Value::Object(map)
     }
