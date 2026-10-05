@@ -13,6 +13,11 @@
 //! accept that; tocsin ignores them. Apprise leaves `prefix=` off the address of
 //! a persistent notification and sends a random id with it; tocsin puts the
 //! prefix on every address, and sends an id only when `nid=` gives one.
+//!
+//! The identities of a service go in the `target` field, which is the one Home
+//! Assistant's notify services read. Apprise sends `targets`, which their schema
+//! does not allow (checked against `notify/const.py` in Home Assistant's core
+//! repository on 2026-10-05; a real server has not been tried).
 
 use std::{fmt::Write as _, sync::LazyLock};
 
@@ -303,7 +308,7 @@ impl HomeAssistant {
                 }
                 for batch in identities.chunks(batch_size) {
                     let mut payload = payload.clone();
-                    payload["targets"] = json!(batch);
+                    payload["target"] = json!(batch);
                     requests.push(post(&path, &payload));
                 }
             }

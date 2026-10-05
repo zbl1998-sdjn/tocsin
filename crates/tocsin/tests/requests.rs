@@ -1259,11 +1259,11 @@ fn home_assistant_calls_each_service_with_its_identities() {
             ),
             (
                 "https://example.com:8443/ha/api/services/light/turn_on".to_owned(),
-                json!({"title": "Title", "message": "Body", "targets": ["e1"]})
+                json!({"title": "Title", "message": "Body", "target": ["e1"]})
             ),
             (
                 "https://example.com:8443/ha/api/services/light/turn_on".to_owned(),
-                json!({"title": "Title", "message": "Body", "targets": ["e2"]})
+                json!({"title": "Title", "message": "Body", "target": ["e2"]})
             ),
         ]
     );
@@ -1272,7 +1272,7 @@ fn home_assistant_calls_each_service_with_its_identities() {
     let service: Service = format!("{url}&batch=yes").parse().expect("parse");
     let requests = service.prepare(&notification("Body"));
     assert_eq!(requests.len(), 2);
-    assert_eq!(body(&requests[1])["targets"], json!(["e1", "e2"]));
+    assert_eq!(body(&requests[1])["target"], json!(["e1", "e2"]));
 }
 
 #[cfg(feature = "homeassistant")]
