@@ -84,17 +84,20 @@
 //! |---|---|---|
 //! | `telegram`, `discord`, `ntfy`, `gotify`, `json`, `form`, `workflows`, `mattermost`, `rocketchat`, `pushover`, `slack` | yes (via `all-services`) | that service |
 //! | `ureq` | yes | [`UreqTransport`], a blocking HTTP transport |
-//! | `http` | no | `TryFrom<&PreparedRequest>` for `http::Request<String>` |
+//! | `http` | no | `TryFrom<&PreparedRequest>` for `http::Request<Vec<u8>>` |
 //! | `compat` | no | test-only access to parsed fields |
 //!
 //! For the smallest build, use `default-features = false` and pick what you
 //! need.
 
+mod attachment;
 mod error;
 #[cfg(feature = "_services")]
 mod grammar;
 #[cfg(feature = "_services")]
 mod message;
+#[cfg(feature = "_multipart")]
+mod multipart;
 #[cfg(feature = "_services")]
 mod native;
 mod notification;
@@ -110,6 +113,7 @@ mod transport;
 #[cfg(feature = "ureq")]
 mod transport_ureq;
 
+pub use attachment::Attachment;
 pub use error::{ParseError, TransportError};
 pub use notification::{Format, Kind, Notification, UnknownValue};
 pub use notifier::{Notifier, Outcome, Receipt, Report};

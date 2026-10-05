@@ -208,6 +208,8 @@ impl Service {
         match self.inner {
             #[cfg(feature = "telegram")]
             Inner::Telegram(ref service) => service.plan(&self.options, notification),
+            #[cfg(feature = "pushover")]
+            Inner::Pushover(ref service) => service.plan(&self.options, notification),
             #[cfg(feature = "mattermost")]
             Inner::Mattermost(ref service) => service.plan(&self.options, notification),
             #[cfg(feature = "slack")]

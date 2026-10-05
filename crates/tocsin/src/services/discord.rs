@@ -1,13 +1,25 @@
 //! Discord webhooks: `discord://<webhook_id>/<webhook_token>`.
+//!
+//! Files are posted after the message, as `multipart/form-data` with the
+//! webhook fields in a `payload_json` part. Up to 10 files and 25 MiB share a
+//! message (`batch=no` posts each file on its own), and the files go with the
+//! first part of a long message.
 
 use std::collections::BTreeMap;
 
 use serde_json::json;
 
 use crate::{
-    Format, Kind, Notification, ParseError, PreparedRequest, SecretString, grammar, message,
+    Attachment, Format, Kind, Method, Notification, ParseError, PreparedRequest, SecretString,
+    grammar, message,
+    multipart::Multipart,
     options::{FormatMode, Options},
 };
+
+/// The most files Discord takes in one message.
+const MAX_FILES: usize = 10;
+/// The most bytes of files Discord takes in one message.
+const MAX_BYTES: usize = 25 * 1024 * 1024;
 
 /// A parsed `discord://` URL.
 ///
@@ -91,6 +103,74 @@ pub(crate) fn parse(input: &str) -> Result<(Options, Discord), ParseError> {
 }
 
 impl Discord {
+    /// The files in the messages they are posted in: up to ten and 25 MiB
+    /// each, or one each without `batch`.
+    fn batches<'a>(&self, files: &'a [Attachment]) -> Vec<Vec<(usize, &'a Attachment)>> {
+        let mut batches = Vec::new();
+        let mut current: Vec<(usize, &Attachment)> = Vec::new();
+        let mut size = 0;
+        for (index, file) in files.iter().enumerate() {
+            let own = if self.batch { file.len() } else { 0 };
+            let per_message = if self.batch { MAX_FILES } else { 1 };
+            if !current.is_empty()
+                && (current.len() >= per_message || (self.batch && size + own > MAX_BYTES))
+            {
+                batches.push(std::mem::take(&mut current));
+                size = 0;
+            }
+            current.push((index + 1, file));
+            size += own;
+        }
+        if !current.is_empty() {
+            batches.push(current);
+        }
+        batches
+    }
+
+    /// The webhook's own fields, which a post of files repeats.
+    fn identity(&self, options: &Options) -> serde_json::Value {
+        let mut payload = json!({"tts": false});
+        if let Some(user) = options.user.as_deref().filter(|u| !u.is_empty()) {
+            payload["username"] = json!(user);
+        }
+        let flags = self.flags.unwrap_or(0) & (4 | 4096);
+        if flags > 0 {
+            payload["flags"] = json!(flags);
+        }
+        if self.avatar {
+            if let Some(avatar_url) = self.avatar_url.as_deref().filter(|u| !u.is_empty()) {
+                payload["avatar_url"] = json!(avatar_url);
+            }
+        }
+        payload
+    }
+
+    /// The posts of the files: nothing else than the webhook's fields and the
+    /// files, and always waiting for the upload to finish.
+    fn uploads(&self, options: &Options, url: &str, files: &[Attachment]) -> Vec<PreparedRequest> {
+        let identity = self.identity(options).to_string();
+        let url = url.replace("wait=false", "wait=true");
+        self.batches(files)
+            .into_iter()
+            .map(|batch| {
+                let fields: Vec<(String, String, &Attachment)> = batch
+                    .into_iter()
+                    .enumerate()
+                    .map(|(position, (no, file))| {
+                        (format!("files[{position}]"), file.name_or_default(no), file)
+                    })
+                    .collect();
+                let mut multipart = Multipart::new().field("payload_json", &identity);
+                for (field, name, file) in &fields {
+                    multipart = multipart.file(field, name, Some(file.mime_type()), file.data());
+                }
+                let (content_type, body) = multipart.finish();
+                PreparedRequest::with_body(Method::Post, &url, Some(&content_type), body)
+                    .with_policy(options.policy())
+            })
+            .collect()
+    }
+
     pub(crate) fn prepare(
         &self,
         options: &Options,
@@ -109,8 +189,15 @@ impl Discord {
             url.push_str("&thread_id=");
             url.push_str(&grammar::encode(thread));
         }
+        let files = notification.carried(options.overflow);
         let mut requests = Vec::new();
-        for (title, chunk) in pieces {
+        for (part, (title, chunk)) in pieces.into_iter().enumerate() {
+            let with_files = part == 0 && !files.is_empty();
+            // A message of nothing but files has no text to post first.
+            if with_files && title.is_empty() && chunk.is_empty() {
+                requests.extend(self.uploads(options, &url, files));
+                continue;
+            }
             let mut payload = json!({"tts": self.tts});
             if let Some(user) = options.user.as_deref().filter(|u| !u.is_empty()) {
                 payload["username"] = json!(user);
@@ -154,6 +241,9 @@ impl Discord {
                 });
             }
             requests.push(PreparedRequest::json(&url, &payload).with_policy(options.policy()));
+            if with_files {
+                requests.extend(self.uploads(options, &url, files));
+            }
         }
         requests
     }

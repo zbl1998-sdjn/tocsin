@@ -29,16 +29,16 @@ compat = []
 
 # The services. Each lists the shared helpers it uses, which are the internal
 # features below; a helper is compiled only when a service that uses it is on.
-telegram = ["_services", "_sequence", "_lookups", "dep:regex", "_list", "_flag", "_to_map", "_paths", "_payload", "_any_host", "_format", "_merged"]
-discord = ["_services", "dep:regex", "_token", "_list", "_flag", "_raw_optional", "_to_map", "_paths", "_payload", "_any_host", "_parts"]
-ntfy = ["_services", "dep:regex", "dep:base64", "_verify", "_list", "_flag", "_raw_optional", "_paths", "_optional_host", "_parts"]
+telegram = ["_services", "_sequence", "_lookups", "_multipart", "dep:regex", "_list", "_flag", "_to_map", "_paths", "_payload", "_any_host", "_format", "_merged"]
+discord = ["_services", "_multipart", "dep:regex", "_token", "_list", "_flag", "_raw_optional", "_to_map", "_paths", "_payload", "_any_host", "_parts"]
+ntfy = ["_services", "dep:regex", "dep:base64", "_pairs", "_verify", "_list", "_flag", "_raw_optional", "_paths", "_optional_host", "_parts"]
 gotify = ["_services", "_token", "_verify", "_paths", "_parts"]
 json = ["_services", "_webhook", "_parts"]
-form = ["_services", "_webhook", "dep:regex", "_parts"]
+form = ["_services", "_webhook", "_multipart", "dep:regex", "_parts"]
 workflows = ["_services", "_validate", "_query", "_verify", "_flag", "_to_map", "_paths", "_payload", "_parts"]
 mattermost = ["_services", "_sequence", "_lookups", "dep:regex", "_token", "_verify", "_quote", "_list", "_flag", "_paths", "_format", "_merged"]
 rocketchat = ["_services", "_sequence", "dep:regex", "_verify", "_query", "_list", "_flag", "_paths", "_format", "_merged"]
-pushover = ["_services", "dep:regex", "_token", "_pairs", "_list", "_flag", "_paths", "_any_host", "_format", "_parts"]
+pushover = ["_services", "_multipart", "dep:regex", "_token", "_pairs", "_list", "_flag", "_paths", "_any_host", "_format", "_parts"]
 slack = ["_services", "_sequence", "_lookups", "_validate", "_query", "_list", "_flag", "_to_map", "_paths", "_payload", "_optional_host", "_format", "_parts"]
 
 # Internal features. Set by every service.
@@ -57,6 +57,8 @@ _verify = ["dep:regex"]
 _query = []
 # Encoding a path segment the same way.
 _quote = []
+# `multipart/form-data` bodies, for services that upload files.
+_multipart = []
 # The same for a list of key and value pairs.
 _pairs = ["_query"]
 # What the JSON and form webhooks share.

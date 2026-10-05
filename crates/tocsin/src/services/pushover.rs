@@ -4,15 +4,25 @@
 //! wants. Apprise can also encrypt the fields end to end (`key=` and `e2ee=`);
 //! tocsin does not, so a URL with a key sends nothing instead of falling back to
 //! plain text.
+//!
+//! Pushover takes one picture with a message. Like Apprise, every image
+//! attachment (up to 5 MiB) is sent as a message of its own, the first with the
+//! text of the first part and the rest named after their file and without a
+//! sound. An attachment
+//! that is not an image is not sent, only the message that goes with it; one
+//! that is an image but too large or empty is a failure, so use
+//! [`Service::plan`](crate::Service::plan) to see it in the report.
 
 use std::sync::LazyLock;
 
 use regex::Regex;
 
 use crate::{
-    Format, Method, Notification, ParseError, PreparedRequest, SecretString,
+    Attachment, Format, Method, Notification, ParseError, Plan, PreparedRequest, SecretString,
+    TransportError,
     grammar::{self, Pairs, encode_pairs},
     message,
+    multipart::Multipart,
     options::{FormatMode, Options},
 };
 
@@ -22,6 +32,9 @@ static GROUP: LazyLock<Regex> = LazyLock::new(|| {
 static DEVICE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*(?P<device>[a-z0-9_-]{1,25})\s*$").expect("static regex")
 });
+
+/// The largest picture Pushover takes.
+const MAX_ATTACHMENT_BYTES: usize = 5_242_880;
 
 /// What Apprise puts in `devices` when no target is given.
 const ALL_DEVICES: &str = "ALL_DEVICES";
@@ -157,21 +170,74 @@ pub(crate) fn parse(input: &str) -> Result<(Options, Pushover), ParseError> {
     Ok((raw.options, pushover))
 }
 
+/// What happens to one attachment.
+enum Upload<'a> {
+    /// It is an image of an acceptable size.
+    Send(&'a Attachment),
+    /// It is no image, so only the message goes out.
+    Skip,
+    /// It is an image that Pushover would refuse.
+    Refuse,
+}
+
+impl<'a> Upload<'a> {
+    fn of(attachment: &'a Attachment) -> Self {
+        let image = attachment
+            .mime_type()
+            .get(..6)
+            .is_some_and(|start| start.eq_ignore_ascii_case("image/"));
+        if !image {
+            Self::Skip
+        } else if attachment.is_empty() || attachment.len() > MAX_ATTACHMENT_BYTES {
+            Self::Refuse
+        } else {
+            Self::Send(attachment)
+        }
+    }
+}
+
 impl Pushover {
     pub(crate) fn prepare(
         &self,
         options: &Options,
         notification: &Notification,
     ) -> Vec<PreparedRequest> {
+        self.requests(options, notification).0
+    }
+
+    /// [`prepare`](Self::prepare), plus the attachments that Pushover would
+    /// refuse, which Apprise reports as failures.
+    pub(crate) fn plan(&self, options: &Options, notification: &Notification) -> Plan {
+        let (requests, refused) = self.requests(options, notification);
+        let mut plan = Plan::requests(requests);
+        for _ in 0..refused {
+            plan = plan.failed(TransportError::InvalidRequest);
+        }
+        plan
+    }
+
+    /// The requests, and how many attachments were refused.
+    fn requests(
+        &self,
+        options: &Options,
+        notification: &Notification,
+    ) -> (Vec<PreparedRequest>, usize) {
         // Fields cannot be encrypted here, and they must not go out in the clear
         // when the URL asked for encryption.
         if (self.key.is_some() && self.e2ee) || (self.devices.is_empty() && self.groups.is_empty())
         {
-            return Vec::new();
+            return (Vec::new(), 0);
         }
         let html = message::format(options, notification) == Format::Html;
         let mut requests = Vec::new();
-        for (title, body) in message::parts(notification, 250, 1024, options.overflow) {
+        let mut refused = 0;
+        let carried = notification.carried(options.overflow);
+        for (part, (title, body)) in message::parts(notification, 250, 1024, options.overflow)
+            .into_iter()
+            .enumerate()
+        {
+            // The files go with the first part of a long message only.
+            let files = if part == 0 { carried } else { &[] };
             let mut fields = Pairs::default();
             fields.set("token", self.token.expose());
             fields.set("priority", &self.priority.to_string());
@@ -210,18 +276,63 @@ impl Pushover {
                 if let Some(device) = device.filter(|d| d != ALL_DEVICES) {
                     fields.set("device", &device);
                 }
-                requests.push(
-                    PreparedRequest::with_body(
-                        Method::Post,
-                        "https://api.pushover.net/1/messages.json",
-                        Some("application/x-www-form-urlencoded"),
-                        encode_pairs(&fields),
-                    )
-                    .with_policy(options.policy()),
-                );
+                if files.is_empty() {
+                    requests.push(Self::request(&fields, None, options));
+                    continue;
+                }
+                for (index, attachment) in files.iter().enumerate() {
+                    let mut fields = fields.clone();
+                    // Only the first message has the text, and it is the only
+                    // one that is allowed to make a sound.
+                    if index > 0 || body.is_empty() {
+                        fields.set("message", &attachment.name_or_default(index + 1));
+                    }
+                    if index > 0 {
+                        fields.remove("title");
+                        fields.set("sound", "none");
+                    }
+                    match Upload::of(attachment) {
+                        Upload::Send(file) => requests.push(Self::request(
+                            &fields,
+                            Some((file, file.name_or_default(index + 1))),
+                            options,
+                        )),
+                        Upload::Skip => requests.push(Self::request(&fields, None, options)),
+                        Upload::Refuse => refused += 1,
+                    }
+                }
             }
         }
-        requests
+        (requests, refused)
+    }
+
+    /// One message, with the picture that goes with it if there is one.
+    fn request(
+        fields: &Pairs,
+        file: Option<(&Attachment, String)>,
+        options: &Options,
+    ) -> PreparedRequest {
+        const URL: &str = "https://api.pushover.net/1/messages.json";
+        let request = match file {
+            None => PreparedRequest::with_body(
+                Method::Post,
+                URL,
+                Some("application/x-www-form-urlencoded"),
+                encode_pairs(fields),
+            ),
+            Some((attachment, name)) => {
+                let mut multipart = Multipart::new();
+                for (key, value) in fields.iter() {
+                    multipart = multipart.field(key, value);
+                }
+                // Apprise gives the file no media type of its own.
+                let (content_type, body) = multipart
+                    .file("attachment", &name, None, attachment.data())
+                    .finish();
+                PreparedRequest::with_body(Method::Post, URL, Some(&content_type), body)
+            }
+        };
+        request.with_policy(options.policy())
     }
 
     #[cfg(feature = "compat")]

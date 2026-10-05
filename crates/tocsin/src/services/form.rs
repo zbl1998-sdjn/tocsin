@@ -3,7 +3,13 @@
 //! The message is sent as `application/x-www-form-urlencoded` fields named
 //! `version`, `title`, `message` and `type`; with `method=get` they go in the
 //! query string instead. See [`Webhook`] for the `+`, `-` and `:` arguments.
-//! Attachments are not supported, so `attach-as` is read and reported only.
+//!
+//! With attachments the body is `multipart/form-data`: the fields, then one file
+//! for every attachment, named by `attach-as` (`file01`, `file02`, ... when it is
+//! left out or has a `*`, so that every file has a field of its own; one fixed
+//! name otherwise). The files go with the first part of a long message. Like
+//! Apprise, a `method=get` request carries only the files in its body and the
+//! fields in the query string.
 
 use std::{collections::BTreeMap, sync::LazyLock};
 
@@ -11,9 +17,10 @@ use regex::Regex;
 
 use super::webhook::Webhook;
 use crate::{
-    Format, Method, Notification, ParseError, PreparedRequest, grammar,
+    Attachment, Format, Method, Notification, ParseError, PreparedRequest, grammar,
     grammar::Pairs,
     message,
+    multipart::Multipart,
     options::{FormatMode, Options},
 };
 
@@ -102,7 +109,41 @@ pub(crate) fn parse(input: &str) -> Result<(Options, Form), ParseError> {
     Ok((raw.options, form))
 }
 
+/// The files of a notification, after the fields that are already in `multipart`.
+fn with_files<'a>(
+    mut multipart: Multipart<'a>,
+    names: &'a [(String, String)],
+    attachments: &'a [Attachment],
+) -> Multipart<'a> {
+    for ((field, filename), attachment) in names.iter().zip(attachments) {
+        multipart = multipart.file(
+            field,
+            filename,
+            Some(attachment.mime_type()),
+            attachment.data(),
+        );
+    }
+    multipart
+}
+
 impl Form {
+    /// The form field and the file name of every attachment, in order.
+    fn file_names(&self, files: &[Attachment]) -> Vec<(String, String)> {
+        files
+            .iter()
+            .enumerate()
+            .map(|(index, attachment)| {
+                let no = index + 1;
+                let field = if self.attach_multiple {
+                    self.attach_as.replace(COUNT, &format!("{no:02}"))
+                } else {
+                    self.attach_as.clone()
+                };
+                (field, attachment.name_or_default(no))
+            })
+            .collect()
+    }
+
     /// One request per message part.
     ///
     /// A `:key=value` argument adds a field. When `key` is one of the four
@@ -116,9 +157,18 @@ impl Form {
     ) -> Vec<PreparedRequest> {
         let origin = self.webhook.origin(options);
         let kind = notification.kind.to_string();
+        let files = notification.carried(options.overflow);
+        let names = self.file_names(files);
         message::parts(notification, 250, 32768, options.overflow)
             .into_iter()
-            .map(|(title, body)| {
+            .enumerate()
+            .map(|(index, (title, body))| {
+                // The files go with the first part of a long message only.
+                let (names, files): (&[_], &[_]) = if index == 0 {
+                    (&names, files)
+                } else {
+                    (&[], &[])
+                };
                 let mut fields = Pairs::default();
                 for (field, value) in [
                     ("version", "1.0"),
@@ -144,19 +194,34 @@ impl Form {
                     } else {
                         format!("{origin}?{query}")
                     };
-                    PreparedRequest::with_body(Method::Get, url, None, String::new())
+                    if names.is_empty() {
+                        PreparedRequest::with_body(Method::Get, url, None, String::new())
+                    } else {
+                        let (content_type, body) =
+                            with_files(Multipart::new(), names, files).finish();
+                        PreparedRequest::with_body(Method::Get, url, Some(&content_type), body)
+                    }
                 } else {
                     let url = if self.webhook.params.is_empty() {
                         origin.clone()
                     } else {
                         format!("{origin}?{}", grammar::encode_pairs(&self.webhook.params))
                     };
-                    PreparedRequest::with_body(
-                        Method::Post,
-                        url,
-                        Some("application/x-www-form-urlencoded"),
-                        grammar::encode_pairs(&fields),
-                    )
+                    if names.is_empty() {
+                        PreparedRequest::with_body(
+                            Method::Post,
+                            url,
+                            Some("application/x-www-form-urlencoded"),
+                            grammar::encode_pairs(&fields),
+                        )
+                    } else {
+                        let mut multipart = Multipart::new();
+                        for (key, value) in fields.iter() {
+                            multipart = multipart.field(key, value);
+                        }
+                        let (content_type, body) = with_files(multipart, names, files).finish();
+                        PreparedRequest::with_body(Method::Post, url, Some(&content_type), body)
+                    }
                 };
                 self.webhook.finish(request, options)
             })

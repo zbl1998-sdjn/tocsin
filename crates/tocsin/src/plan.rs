@@ -246,7 +246,10 @@ impl Sequence for Lookups {
 enum Job {
     Request(PreparedRequest, Option<Check>),
     /// Something that cannot be sent but that is a failure all the same.
-    #[cfg_attr(not(feature = "slack"), allow(dead_code))]
+    #[allow(
+        dead_code,
+        reason = "a build with only some services leaves this unused"
+    )]
     Failure(TransportError),
     #[cfg_attr(not(feature = "_sequence"), allow(dead_code))]
     Sequence(Box<dyn Sequence>),
@@ -305,7 +308,10 @@ impl Plan {
     /// Add a failure after what is already planned, for a part of the
     /// notification that cannot be sent.
     #[must_use]
-    #[cfg_attr(not(feature = "slack"), allow(dead_code))]
+    #[allow(
+        dead_code,
+        reason = "a build with only some services leaves this unused"
+    )]
     pub(crate) fn failed(mut self, error: TransportError) -> Self {
         self.jobs.push_back(Job::Failure(error));
         self

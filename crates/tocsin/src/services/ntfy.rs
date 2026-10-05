@@ -1,4 +1,9 @@
 //! ntfy topics: `ntfy://<topic>` (ntfy.sh) or `ntfys://[user:pass@]host[:port]/<topic>`.
+//!
+//! A message without attachments is one JSON publish. Attachments are published
+//! the other way ntfy knows: each file is the body of a request to the topic,
+//! named in the `filename` query parameter, and the title and the text go in the
+//! query parameters of the first one.
 
 use std::{fmt::Write as _, sync::LazyLock};
 
@@ -7,8 +12,8 @@ use regex::Regex;
 use serde_json::json;
 
 use crate::{
-    Format, Notification, ParseError, PreparedRequest, SecretString,
-    grammar::{self, Raw, is_hostname},
+    Format, Method, Notification, ParseError, PreparedRequest, SecretString,
+    grammar::{self, Pairs, Raw, is_hostname},
     message,
     options::{FormatMode, Options},
 };
@@ -53,8 +58,8 @@ impl Priority {
 
 /// A parsed `ntfy://` or `ntfys://` URL.
 ///
-/// Options such as `tags`, `attach` and `filename` are parsed and validated
-/// like Apprise does, but only the ones that shape the request are applied.
+/// `image` is parsed and reported, but the picture Apprise links in its own
+/// repository is not added; only an explicit `avatar_url` is sent.
 #[derive(Clone)]
 #[cfg_attr(not(feature = "compat"), allow(dead_code))]
 pub(crate) struct Ntfy {
@@ -227,6 +232,57 @@ pub(crate) fn parse(input: &str) -> Result<(Options, Ntfy), ParseError> {
 }
 
 impl Ntfy {
+    /// The headers every request carries, and the policy.
+    fn finish(&self, mut request: PreparedRequest, options: &Options) -> PreparedRequest {
+        let mut header = |name: &str, value: String| {
+            request
+                .headers
+                .insert(name.to_owned(), SecretString::new(value));
+        };
+        if self.mode == Mode::Private {
+            match (self.auth, &self.token) {
+                (Auth::Token, Some(token)) => {
+                    header("Authorization", format!("Bearer {}", token.expose()));
+                }
+                (Auth::Basic, _) => {
+                    if let Some(user) = options.user.as_deref().filter(|u| !u.is_empty()) {
+                        let password = options.password.as_ref().map_or("", SecretString::expose);
+                        header(
+                            "Authorization",
+                            format!("Basic {}", STANDARD.encode(format!("{user}:{password}"))),
+                        );
+                    }
+                }
+                (Auth::Token, None) => {}
+            }
+        }
+        if matches!(options.format, FormatMode::Fixed(Format::Markdown)) {
+            header("X-Markdown", "yes".to_owned());
+        }
+        if self.priority != Priority::Default {
+            header("X-Priority", self.priority.as_str().to_owned());
+        }
+        for (value, name) in [
+            (&self.delay, "X-Delay"),
+            (&self.click, "X-Click"),
+            (&self.email, "X-Email"),
+            (&self.actions, "X-Actions"),
+        ] {
+            if let Some(value) = value {
+                header(name, value.clone());
+            }
+        }
+        if !self.tags.is_empty() {
+            header("X-Tags", self.tags.join(","));
+        }
+        if self.image {
+            if let Some(icon) = self.avatar_url.as_deref().filter(|u| !u.is_empty()) {
+                header("X-Icon", icon.to_owned());
+            }
+        }
+        request.with_policy(options.policy())
+    }
+
     pub(crate) fn prepare(
         &self,
         options: &Options,
@@ -251,66 +307,52 @@ impl Ntfy {
             }
         }
         let pieces = message::parts(notification, 200, 7800, options.overflow);
+        let carried = notification.carried(options.overflow);
         let mut requests = Vec::new();
         for topic in self.targets.iter().rev() {
-            for (title, chunk) in &pieces {
-                let mut payload = json!({"topic": topic});
-                if !title.is_empty() {
-                    payload["title"] = json!(title);
-                }
-                if !chunk.is_empty() {
-                    payload["message"] = json!(chunk);
-                }
-                let mut request =
-                    PreparedRequest::json(&url, &payload).with_policy(options.policy());
-                let mut header = |name: &str, value: String| {
-                    request
-                        .headers
-                        .insert(name.to_owned(), SecretString::new(value));
-                };
-                if private {
-                    match (self.auth, &self.token) {
-                        (Auth::Token, Some(token)) => {
-                            header("Authorization", format!("Bearer {}", token.expose()));
+            for (part, (title, chunk)) in pieces.iter().enumerate() {
+                // The files go with the first part of a long message only.
+                let files = if part == 0 { carried } else { &[] };
+                let mut built = Vec::new();
+                if files.is_empty() {
+                    let mut payload = json!({"topic": topic});
+                    if let Some(attach) = self.attach.as_deref().filter(|a| !a.is_empty()) {
+                        payload["attach"] = json!(attach);
+                        if let Some(filename) = self.filename.as_deref().filter(|f| !f.is_empty()) {
+                            payload["filename"] = json!(filename);
                         }
-                        (Auth::Basic, _) => {
-                            if let Some(user) = options.user.as_deref().filter(|u| !u.is_empty()) {
-                                let password =
-                                    options.password.as_ref().map_or("", SecretString::expose);
-                                header(
-                                    "Authorization",
-                                    format!(
-                                        "Basic {}",
-                                        STANDARD.encode(format!("{user}:{password}"))
-                                    ),
-                                );
+                    }
+                    if !title.is_empty() {
+                        payload["title"] = json!(title);
+                    }
+                    if !chunk.is_empty() {
+                        payload["message"] = json!(chunk);
+                    }
+                    built.push(PreparedRequest::json(&url, &payload));
+                } else {
+                    for (index, attachment) in files.iter().enumerate() {
+                        let mut query = Pairs::default();
+                        query.set("filename", &attachment.name_or_default(index + 1));
+                        // The text goes with the first file only.
+                        if index == 0 {
+                            if !title.is_empty() {
+                                query.set("title", title);
+                            }
+                            if !chunk.is_empty() {
+                                query.set("message", chunk);
                             }
                         }
-                        (Auth::Token, None) => {}
+                        built.push(PreparedRequest::with_body(
+                            Method::Post,
+                            format!("{url}/{topic}?{}", grammar::encode_pairs(&query)),
+                            None,
+                            attachment.data(),
+                        ));
                     }
                 }
-                if matches!(options.format, FormatMode::Fixed(Format::Markdown)) {
-                    header("X-Markdown", "yes".to_owned());
+                for request in built {
+                    requests.push(self.finish(request, options));
                 }
-                if self.priority != Priority::Default {
-                    header("X-Priority", self.priority.as_str().to_owned());
-                }
-                for (value, name) in [
-                    (&self.delay, "X-Delay"),
-                    (&self.click, "X-Click"),
-                    (&self.email, "X-Email"),
-                    (&self.actions, "X-Actions"),
-                ] {
-                    if let Some(value) = value {
-                        header(name, value.clone());
-                    }
-                }
-                if self.image {
-                    if let Some(icon) = self.avatar_url.as_deref().filter(|u| !u.is_empty()) {
-                        header("X-Icon", icon.to_owned());
-                    }
-                }
-                requests.push(request);
             }
         }
         requests

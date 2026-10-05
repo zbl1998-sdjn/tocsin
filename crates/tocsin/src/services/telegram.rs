@@ -5,6 +5,13 @@
 //! next one needs, so it works through [`Service::plan`](crate::Service::plan);
 //! [`Service::prepare`](crate::Service::prepare) returns nothing for it. Send the
 //! bot a message first, as Apprise asks you to.
+//!
+//! Files are uploaded with `sendPhoto`, `sendVideo`, `sendAudio`, `sendVoice`,
+//! `sendAnimation` or `sendDocument`, whichever fits their media type (a photo
+//! over 10 MB goes as a document, a file over 50 MB is refused). The caption and
+//! the files' placement follow Apprise; `album=` is ignored, so every file is a
+//! message of its own. A refused file is a failure in the report of
+//! [`Service::plan`](crate::Service::plan).
 
 use std::{collections::BTreeMap, sync::LazyLock};
 
@@ -12,8 +19,9 @@ use regex::Regex;
 use serde_json::{Number, Value, json};
 
 use crate::{
-    Format, Method, Notification, ParseError, Plan, PreparedRequest, Response, SecretString,
-    grammar, message,
+    Attachment, Format, Method, Notification, ParseError, Plan, PreparedRequest, Response,
+    SecretString, TransportError, grammar, message,
+    multipart::Multipart,
     options::{FormatMode, Options},
     plan::{Lookups, Step},
 };
@@ -34,6 +42,45 @@ static TARGET: LazyLock<Regex> = LazyLock::new(|| {
     )
     .expect("static regex")
 });
+
+/// The longest text that can be the caption of a file.
+const CAPTION_MAX: usize = 1024;
+/// The largest photo that is sent as a photo; Telegram takes larger ones as
+/// documents.
+const PHOTO_MAX_BYTES: usize = 10_000_000;
+/// The largest file a bot can upload.
+const FILE_MAX_BYTES: usize = 50_000_000;
+
+/// The text that goes with the first file instead of a message of its own.
+struct Caption<'a> {
+    text: &'a str,
+    /// Whether it is shown above the file.
+    above: bool,
+    parse_mode: Option<&'static str>,
+}
+
+/// The Bot API method that sends a file, and the name of its file field.
+fn media_method(attachment: &Attachment) -> (&'static str, &'static str) {
+    let mime = attachment.mime_type().to_ascii_lowercase();
+    let starts = |prefixes: &[&str]| prefixes.iter().any(|prefix| mime.starts_with(prefix));
+    if starts(&["image/gif", "video/h264"]) {
+        ("sendAnimation", "animation")
+    } else if starts(&["image/"]) {
+        if attachment.len() > PHOTO_MAX_BYTES {
+            ("sendDocument", "document")
+        } else {
+            ("sendPhoto", "photo")
+        }
+    } else if starts(&["video/mp4"]) {
+        ("sendVideo", "video")
+    } else if starts(&["application/ogg", "audio/ogg"]) {
+        ("sendVoice", "voice")
+    } else if starts(&["audio/mpeg", "audio/mp4a-latm"]) {
+        ("sendAudio", "audio")
+    } else {
+        ("sendDocument", "document")
+    }
+}
 
 /// The name the detected chat is looked up under.
 const OWNER: &str = "owner";
@@ -228,52 +275,168 @@ fn parse_target(item: &str, default_topic: Option<i64>) -> Result<Option<Target>
 }
 
 impl Telegram {
+    /// The `parse_mode` that goes with a text in this format.
+    fn parse_mode(&self, format: Format) -> Option<&'static str> {
+        match format {
+            Format::Html => Some("HTML"),
+            Format::Markdown => Some(match self.markdown {
+                MarkdownVersion::V2 => "MarkdownV2",
+                MarkdownVersion::V1 => "Markdown",
+            }),
+            _ => None,
+        }
+    }
+
+    /// One `sendMessage` request.
+    fn message(
+        &self,
+        options: &Options,
+        target: &Target,
+        text: &str,
+        format: Format,
+    ) -> PreparedRequest {
+        let mut payload = json!({
+            "chat_id": target.chat.to_json(),
+            "text": text,
+            "disable_notification": self.silent,
+            "link_preview_options": {"is_disabled": !self.preview},
+        });
+        if let Some(topic) = target.topic {
+            payload["message_thread_id"] = json!(topic);
+        }
+        if let Some(mode) = self.parse_mode(format) {
+            payload["parse_mode"] = json!(mode);
+        }
+        let url = format!(
+            "https://api.telegram.org/bot{}/sendMessage",
+            self.bot_token.expose()
+        );
+        PreparedRequest::json(url, &payload).with_policy(options.policy())
+    }
+
+    /// The upload of one file, with `caption` if it has one, or `None` when
+    /// Telegram would refuse a file of this size.
+    fn media(
+        &self,
+        options: &Options,
+        target: &Target,
+        (no, attachment): (usize, &Attachment),
+        caption: Option<&Caption<'_>>,
+    ) -> Option<PreparedRequest> {
+        if attachment.len() > FILE_MAX_BYTES {
+            return None;
+        }
+        let (function, key) = media_method(attachment);
+        let name = attachment.name_or_default(no);
+        let mut fields: Vec<(&str, String)> = Vec::new();
+        if let Some(caption) = caption {
+            fields.push(("caption", caption.text.to_owned()));
+            fields.push(("show_caption_above_media", caption.above.to_string()));
+            if let Some(mode) = caption.parse_mode {
+                fields.push(("parse_mode", mode.to_owned()));
+            }
+        }
+        fields.push(("title", name.clone()));
+        fields.push((
+            "chat_id",
+            match &target.chat {
+                Chat::Id(number) => number.to_string(),
+                Chat::Name(name) => name.clone(),
+            },
+        ));
+        if let Some(topic) = target.topic {
+            fields.push(("message_thread_id", topic.to_string()));
+        }
+        let mut multipart = Multipart::new();
+        for (field, value) in &fields {
+            multipart = multipart.field(field, value);
+        }
+        // Apprise gives the file no media type of its own.
+        let (content_type, body) = multipart.file(key, &name, None, attachment.data()).finish();
+        let url = format!(
+            "https://api.telegram.org/bot{}/{function}",
+            self.bot_token.expose()
+        );
+        Some(
+            PreparedRequest::with_body(Method::Post, url, Some(&content_type), body)
+                .with_policy(options.policy()),
+        )
+    }
+
     pub(crate) fn prepare(
         &self,
         options: &Options,
         notification: &Notification,
     ) -> Vec<PreparedRequest> {
+        self.requests(options, notification).0
+    }
+
+    /// The requests, and how many files Telegram would refuse.
+    ///
+    /// The files go with one part of the message: the last when the text comes
+    /// first (`content=before`, the default), the first otherwise. A text of
+    /// less than 1024 characters is their caption instead of a message of its
+    /// own, as Apprise does.
+    fn requests(
+        &self,
+        options: &Options,
+        notification: &Notification,
+    ) -> (Vec<PreparedRequest>, usize) {
         let format = message::format(options, notification);
         let body = message::merged(notification, format);
         let chunks = message::chunks(&body, 4096, options.overflow);
-        let url = format!(
-            "https://api.telegram.org/bot{}/sendMessage",
-            self.bot_token.expose()
-        );
+        let carried = notification.carried(options.overflow);
+        let attach_at = if self.content == Content::Before {
+            chunks.len() - 1
+        } else {
+            0
+        };
         let mut requests = Vec::new();
+        let mut refused = 0;
         for target in &self.targets {
-            for chunk in &chunks {
-                let mut payload = json!({
-                    "chat_id": target.chat.to_json(),
-                    "text": chunk,
-                    "disable_notification": self.silent,
-                    "link_preview_options": {"is_disabled": !self.preview},
-                });
-                if let Some(topic) = target.topic {
-                    payload["message_thread_id"] = json!(topic);
+            for (index, chunk) in chunks.iter().enumerate() {
+                let files = if index == attach_at { carried } else { &[] };
+                let has_body = !chunk.is_empty();
+                let caption = (!files.is_empty()
+                    && has_body
+                    && chunk.chars().count() < CAPTION_MAX)
+                    .then(|| Caption {
+                        text: chunk,
+                        above: self.content == Content::Before,
+                        parse_mode: self.parse_mode(format),
+                    });
+                let text_with_files = has_body && caption.is_none() && !files.is_empty();
+                if files.is_empty() || (text_with_files && self.content == Content::Before) {
+                    requests.push(self.message(options, target, chunk, format));
                 }
-                match format {
-                    Format::Html => payload["parse_mode"] = json!("HTML"),
-                    Format::Markdown => {
-                        payload["parse_mode"] = json!(match self.markdown {
-                            MarkdownVersion::V2 => "MarkdownV2",
-                            MarkdownVersion::V1 => "Markdown",
-                        });
+                for (index, attachment) in files.iter().enumerate() {
+                    let caption = if index == 0 { caption.as_ref() } else { None };
+                    match self.media(options, target, (index + 1, attachment), caption) {
+                        Some(request) => requests.push(request),
+                        None => refused += 1,
                     }
-                    _ => {}
                 }
-                requests.push(PreparedRequest::json(&url, &payload).with_policy(options.policy()));
+                if text_with_files && self.content == Content::After {
+                    requests.push(self.message(options, target, chunk, format));
+                }
             }
         }
-        requests
+        (requests, refused)
     }
 
-    /// [`prepare`](Self::prepare), plus the detection of the chat to write to
+    /// [`prepare`](Self::prepare), plus the files Telegram would refuse, which
+    /// Apprise reports as failures, and the detection of the chat to write to
     /// when no chat id was given.
     pub(crate) fn plan(&self, options: &Options, notification: &Notification) -> Plan {
         if !(self.targets.is_empty() && self.detect) {
-            return Plan::requests(self.prepare(options, notification));
+            let (requests, refused) = self.requests(options, notification);
+            return Self::refusals(Plan::requests(requests), refused);
         }
+        let too_large = notification
+            .carried(options.overflow)
+            .iter()
+            .filter(|file| file.len() > FILE_MAX_BYTES)
+            .count();
         let url = format!(
             "https://api.telegram.org/bot{}/getUpdates",
             self.bot_token.expose()
@@ -281,7 +444,7 @@ impl Telegram {
         let policy = options.policy();
         let (telegram, options, notification) =
             (self.clone(), options.clone(), notification.clone());
-        Plan::requests(Vec::new()).then(Lookups::new(
+        Self::refusals(Plan::requests(Vec::new()), too_large).then(Lookups::new(
             vec![OWNER.to_owned()],
             move |_| {
                 // Apprise sends this as a POST without a body.
@@ -312,6 +475,14 @@ impl Telegram {
                     .collect()
             },
         ))
+    }
+
+    /// `count` failures, for the files that were not sent.
+    fn refusals(mut plan: Plan, count: usize) -> Plan {
+        for _ in 0..count {
+            plan = plan.failed(TransportError::InvalidRequest);
+        }
+        plan
     }
 
     #[cfg(feature = "compat")]

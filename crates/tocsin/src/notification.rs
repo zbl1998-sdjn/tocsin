@@ -2,6 +2,8 @@
 
 use std::{fmt, str::FromStr};
 
+use crate::Attachment;
+
 /// What kind of event a notification reports.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -105,6 +107,9 @@ pub struct Notification {
     pub kind: Kind,
     /// How `body` is written.
     pub format: Format,
+    /// Files to send along. Only some services can carry them; see the
+    /// service's own documentation.
+    pub attachments: Vec<Attachment>,
 }
 
 impl Notification {
@@ -115,6 +120,7 @@ impl Notification {
             body: body.into(),
             kind: Kind::Info,
             format: Format::Text,
+            attachments: Vec::new(),
         }
     }
 
@@ -138,6 +144,34 @@ impl Notification {
         self.format = format;
         self
     }
+
+    /// Add a file to send along.
+    #[must_use]
+    pub fn attach(mut self, attachment: Attachment) -> Self {
+        self.attachments.push(attachment);
+        self
+    }
+
+    /// The files that go along.
+    #[must_use]
+    pub fn attachments(&self) -> &[Attachment] {
+        &self.attachments
+    }
+
+    /// The files a service sends: all of them, or only the first when the
+    /// overflow mode is `truncate`, as Apprise does. A service sends them with
+    /// one part of a split message, not with every part.
+    #[allow(
+        dead_code,
+        reason = "a build with only some services leaves this unused"
+    )]
+    pub(crate) fn carried(&self, overflow: crate::Overflow) -> &[Attachment] {
+        if overflow == crate::Overflow::Truncate {
+            &self.attachments[..self.attachments.len().min(1)]
+        } else {
+            &self.attachments
+        }
+    }
 }
 
 impl fmt::Debug for Notification {
@@ -147,6 +181,7 @@ impl fmt::Debug for Notification {
             .field("format", &self.format)
             .field("title", &"[REDACTED]")
             .field("body", &"[REDACTED]")
+            .field("attachments", &self.attachments.len())
             .finish()
     }
 }

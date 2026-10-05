@@ -1,14 +1,16 @@
 //! A JSON webhook: `json://<host>[:<port>][/<path>]` and `jsons://...`.
 //!
 //! The body is Apprise's own layout, so existing receivers keep working:
-//! `{"version", "title", "message", "attachments", "type"}`. See
-//! [`Webhook`] for the `+`, `-` and `:` arguments.
+//! `{"version", "title", "message", "attachments", "type"}`. Every attachment
+//! is `{"filename", "base64", "mimetype"}`, and goes with the first part of a
+//! long message. See [`Webhook`] for the `+`, `-` and `:` arguments.
 
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Map, Value, json};
 
 use super::webhook::Webhook;
 use crate::{
-    Format, Notification, ParseError, PreparedRequest, grammar, message,
+    Attachment, Format, Notification, ParseError, PreparedRequest, grammar, message,
     options::{FormatMode, Options},
 };
 
@@ -30,6 +32,21 @@ pub(crate) fn parse(input: &str) -> Result<(Options, Json), ParseError> {
     Ok((raw.options, json))
 }
 
+/// The attachments in the shape receivers of Apprise's JSON expect.
+fn attachments(files: &[Attachment]) -> Vec<Value> {
+    files
+        .iter()
+        .enumerate()
+        .map(|(index, attachment)| {
+            json!({
+                "filename": attachment.name_or_default(index + 1),
+                "base64": STANDARD.encode(attachment.data()),
+                "mimetype": attachment.mime_type(),
+            })
+        })
+        .collect()
+}
+
 impl Json {
     /// One request per message part.
     ///
@@ -46,14 +63,19 @@ impl Json {
             url.push('?');
             url.push_str(&grammar::encode_pairs(&self.webhook.params));
         }
+        let files = notification.carried(options.overflow);
         message::parts(notification, 250, 32768, options.overflow)
             .into_iter()
-            .map(|(title, body)| {
+            .enumerate()
+            .map(|(index, (title, body))| {
                 let mut payload = Map::new();
                 payload.insert("version".to_owned(), json!("1.0"));
                 payload.insert("title".to_owned(), json!(title));
                 payload.insert("message".to_owned(), json!(body));
-                payload.insert("attachments".to_owned(), json!([]));
+                payload.insert(
+                    "attachments".to_owned(),
+                    json!(attachments(if index == 0 { files } else { &[] })),
+                );
                 payload.insert("type".to_owned(), json!(notification.kind.to_string()));
                 for (key, value) in self.webhook.payload.iter() {
                     if let Some(field) = payload.get(key).cloned() {
