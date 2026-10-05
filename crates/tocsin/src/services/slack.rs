@@ -2,9 +2,16 @@
 //! webhook, `slack://xoxb-.../<channel>...` for a bot token, and
 //! `slack://<id>/<id>/<id>[/<id>]?mode=workflow|trigger` for workflow webhooks.
 //!
-//! Apprise's `template` option (a file of Slack blocks), the lookup of an e-mail
-//! address as a user, and file attachments are not supported. A message to an
-//! e-mail address is skipped because the lookup needs a request of its own.
+//! Apprise's `template` option (a file of Slack blocks) is not supported. A bot
+//! can also be given an e-mail address as a target: the user it belongs to is
+//! looked up first (once for each address, before the first message), which is
+//! why that only works through [`Service::plan`](crate::Service::plan);
+//! [`Service::prepare`](crate::Service::prepare) skips those targets.
+//!
+//! Slack answers `200` to a message it did not accept (`{"ok": false}` from the
+//! Web API) and to a webhook that is wrong in some ways, so a plan reads the
+//! answer too, as Apprise does: a webhook has to answer `ok`, the Web API has to
+//! say `"ok": true`.
 
 use std::{collections::BTreeMap, sync::LazyLock};
 
@@ -12,8 +19,10 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use crate::{
-    Format, Kind, Notification, ParseError, PreparedRequest, SecretString, grammar, message,
+    Format, Kind, Method, Notification, ParseError, Plan, PreparedRequest, Response, SecretString,
+    TransportError, grammar, message,
     options::{FormatMode, Options},
+    plan::{Check, Lookups, Step},
 };
 
 static TOKEN_A: LazyLock<Regex> =
@@ -25,6 +34,16 @@ static ACCESS_TOKEN: LazyLock<Regex> =
 static CHANNEL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^(?P<channel>[+#@]?[A-Z0-9_-]{1,32})(?::(?P<thread>[0-9.]+))?$")
         .expect("static regex")
+});
+
+/// Apprise's check for an e-mail address, which also reads `Name <address>` and
+/// `label+address`. It only looks at the start of the text, like Python's
+/// `re.match`. The group `full` is the address that is looked up.
+static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?i)^(?:(?:[\s"']{0,32})?(?P<name>[^:<'"]{0,128})?[:<\s'"]{1,32})?(?P<full>(?:(?P<label>[^+\s]{1,128})\+)?(?P<email>(?P<userid>[a-z0-9_!#$%&*/=?%`{|}~^-]+(?:\.[a-z0-9_!#$%&'*/=?%`{|}~^-]+)*)@(?P<domain>(?:(?:[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9_-]*[a-z0-9]))|[a-z0-9][a-z0-9_-]{5,})))\s*>?"#,
+    )
+    .expect("static regex")
 });
 
 /// The ways Slack can be reached, in the order Apprise tries a prefix against.
@@ -62,6 +81,31 @@ impl Mode {
             .into_iter()
             .find(|mode| mode.as_str().starts_with(prefix))
     }
+}
+
+/// The address to look up, if `target` is an e-mail address.
+fn email_of(target: &str) -> Option<String> {
+    EMAIL.captures(target).map(|found| found["full"].to_owned())
+}
+
+/// A webhook answers `ok` when it took the message.
+fn webhook_said_ok(response: &Response) -> bool {
+    response.body.expose() == b"ok"
+}
+
+/// The Web API answers `200` to everything and says whether it did what it was
+/// asked in `"ok"`.
+fn api_said_ok(response: &Response) -> bool {
+    serde_json::from_slice::<Value>(response.body.expose())
+        .ok()
+        .and_then(|answer| answer.get("ok")?.as_bool())
+        .unwrap_or(false)
+}
+
+/// The user id in the answer to `users.lookupByEmail`.
+fn read_user_id(response: &Response) -> Option<String> {
+    let answer: Value = serde_json::from_slice(response.body.expose()).ok()?;
+    Some(answer.get("user")?.get("id")?.as_str()?.to_owned())
 }
 
 /// Apprise's `CHANNEL_LIST_DELIM`: also splits on `#`.
@@ -429,6 +473,84 @@ impl Slack {
         requests
     }
 
+    /// How to tell from an answer that Slack accepted a message.
+    fn check(&self) -> Option<Check> {
+        match self.mode {
+            Mode::Hook | Mode::GovHook => Some(webhook_said_ok),
+            Mode::Bot => Some(api_said_ok),
+            Mode::Workflow | Mode::Trigger => None,
+        }
+    }
+
+    /// [`prepare`](Self::prepare) with every answer read, the failures Apprise
+    /// reports for targets that cannot be used, and, for a bot, the lookup of
+    /// the users that were given as e-mail addresses.
+    pub(crate) fn plan(&self, options: &Options, notification: &Notification) -> Plan {
+        let check = self.check();
+        let mut plan = Plan::checked(self.prepare(options, notification), check);
+        if matches!(self.mode, Mode::Workflow | Mode::Trigger) {
+            return plan;
+        }
+        // Posts to a user that is only known by e-mail address, and who it is.
+        let mut by_mail: Vec<(String, Value)> = Vec::new();
+        for (title, body) in message::parts(notification, 250, 35000, options.overflow) {
+            for channel in self.channels.iter().flatten() {
+                if let Some(address) = email_of(channel) {
+                    if self.mode == Mode::Bot {
+                        let payload = self.payload(options, notification, &title, &body);
+                        by_mail.push((address, payload));
+                    } else {
+                        // Only a bot can look a user up.
+                        plan = plan.failed(TransportError::InvalidRequest);
+                    }
+                } else if !CHANNEL.is_match(channel) {
+                    plan = plan.failed(TransportError::InvalidRequest);
+                }
+            }
+        }
+        let (Some(token), false) = (self.access_token.clone(), by_mail.is_empty()) else {
+            return plan;
+        };
+        let mut addresses: Vec<String> = Vec::new();
+        for (address, _) in &by_mail {
+            if !addresses.contains(address) {
+                addresses.push(address.clone());
+            }
+        }
+        let url = self.url();
+        let policy = options.policy();
+        let bearer = move || SecretString::new(format!("Bearer {}", token.expose()));
+        let lookup_bearer = bearer.clone();
+        plan.then(Lookups::new(
+            addresses,
+            move |address| {
+                let url = format!(
+                    "https://slack.com/api/users.lookupByEmail?email={}",
+                    grammar::form_encode(address)
+                );
+                let mut request =
+                    PreparedRequest::with_body(Method::Get, url, None, Vec::<u8>::new())
+                        .with_policy(policy);
+                request
+                    .headers
+                    .insert("Authorization".to_owned(), lookup_bearer());
+                Step::setup(request).checked(Some(api_said_ok))
+            },
+            read_user_id,
+            move |found| {
+                by_mail
+                    .into_iter()
+                    .filter_map(|(address, mut payload)| {
+                        payload["channel"] = json!(found.get(&address)?);
+                        let mut request = PreparedRequest::json(&url, &payload).with_policy(policy);
+                        request.headers.insert("Authorization".to_owned(), bearer());
+                        Some(Step::delivery(request).checked(Some(api_said_ok)))
+                    })
+                    .collect()
+            },
+        ))
+    }
+
     #[cfg(feature = "compat")]
     pub(crate) fn compat(&self, map: &mut serde_json::Map<String, Value>) {
         for (key, value) in [
@@ -446,6 +568,28 @@ impl Slack {
             ("tokens", json!(self.tokens)),
         ] {
             map.insert(key.to_owned(), value);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::email_of;
+
+    #[test]
+    fn an_email_address_is_found_the_way_apprise_finds_it() {
+        for (target, address) in [
+            ("bob@example.com", Some("bob@example.com")),
+            ("label+bob@example.com", Some("label+bob@example.com")),
+            ("Bob <bob@example.com>", Some("bob@example.com")),
+            ("user@localhost", Some("user@localhost")),
+            ("#general", None),
+            ("@bob", None),
+            ("general", None),
+            ("+C123", None),
+            ("bob@x", None),
+        ] {
+            assert_eq!(email_of(target).as_deref(), address, "target: {target}");
         }
     }
 }

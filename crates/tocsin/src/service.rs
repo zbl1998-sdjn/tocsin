@@ -208,6 +208,8 @@ impl Service {
         match self.inner {
             #[cfg(feature = "mattermost")]
             Inner::Mattermost(ref service) => service.plan(&self.options, notification),
+            #[cfg(feature = "slack")]
+            Inner::Slack(ref service) => service.plan(&self.options, notification),
             #[cfg(feature = "rocketchat")]
             Inner::RocketChat(ref service) => service.plan(&self.options, notification),
             #[allow(unreachable_patterns, reason = "every service may need a plan")]

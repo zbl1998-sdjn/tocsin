@@ -25,9 +25,15 @@
 //! # fn main() {}
 //! ```
 
+#[cfg(any(feature = "mattermost", feature = "slack"))]
+use std::collections::HashMap;
 use std::{collections::VecDeque, fmt};
 
 use crate::{Outcome, PreparedRequest, Response, TransportError};
+
+/// Reads the body of an answer that has no error status and says whether the
+/// service accepted the notification. For services that answer `200` either way.
+pub(crate) type Check = fn(&Response) -> bool;
 
 /// What a request in a [`Sequence`] is for, which decides what its result means
 /// for the plan.
@@ -51,6 +57,7 @@ pub(crate) enum Role {
 pub(crate) struct Step {
     pub(crate) request: PreparedRequest,
     pub(crate) role: Role,
+    pub(crate) check: Option<Check>,
 }
 
 #[allow(
@@ -62,6 +69,7 @@ impl Step {
         Self {
             request,
             role: Role::Delivery,
+            check: None,
         }
     }
 
@@ -69,6 +77,7 @@ impl Step {
         Self {
             request,
             role: Role::Setup,
+            check: None,
         }
     }
 
@@ -76,7 +85,14 @@ impl Step {
         Self {
             request,
             role: Role::Cleanup,
+            check: None,
         }
+    }
+
+    /// Have the answer to this request checked.
+    pub(crate) fn checked(mut self, check: Option<Check>) -> Self {
+        self.check = check;
+        self
     }
 }
 
@@ -120,13 +136,6 @@ impl Next {
 
     /// The answer cannot be used, but the others can still be: report the
     /// failure and go on with `step`, or stop when there is none.
-    #[cfg_attr(
-        not(feature = "mattermost"),
-        allow(
-            dead_code,
-            reason = "only a lookup can fail without ending the sequence"
-        )
-    )]
     pub(crate) fn skip(error: TransportError, step: Option<Step>) -> Self {
         Self {
             failure: Some(error),
@@ -146,8 +155,99 @@ pub(crate) trait Sequence: Send {
     fn answer(&mut self, result: Result<&Response, &TransportError>) -> Next;
 }
 
+/// What a name that was looked up stands for, by name.
+#[cfg(any(feature = "mattermost", feature = "slack"))]
+type Found = HashMap<String, String>;
+
+/// Builds the deliveries that need the answers to the lookups.
+#[cfg(any(feature = "mattermost", feature = "slack"))]
+type Deliveries = Box<dyn FnOnce(&Found) -> Vec<Step> + Send>;
+
+/// Looks names up, one request each, and then sends the deliveries that are
+/// built from what was found. A name that cannot be resolved is a failure of its
+/// own, and the deliveries that need no lookup still go out.
+#[cfg(any(feature = "mattermost", feature = "slack"))]
+pub(crate) struct Lookups {
+    pending: VecDeque<String>,
+    /// The name whose answer is awaited.
+    asked: Option<String>,
+    /// What each name that was resolved stands for.
+    found: Found,
+    request: Box<dyn Fn(&str) -> Step + Send>,
+    read: fn(&Response) -> Option<String>,
+    /// Builds the deliveries once every name was looked up.
+    deliveries: Option<Deliveries>,
+    queue: VecDeque<Step>,
+}
+
+#[cfg(any(feature = "mattermost", feature = "slack"))]
+impl Lookups {
+    /// `names` must not be empty: a plan without a lookup needs no sequence.
+    pub(crate) fn new(
+        names: Vec<String>,
+        request: impl Fn(&str) -> Step + Send + 'static,
+        read: fn(&Response) -> Option<String>,
+        deliveries: impl FnOnce(&Found) -> Vec<Step> + Send + 'static,
+    ) -> Self {
+        Self {
+            pending: names.into(),
+            asked: None,
+            found: HashMap::new(),
+            request: Box::new(request),
+            read,
+            deliveries: Some(Box::new(deliveries)),
+            queue: VecDeque::new(),
+        }
+    }
+
+    /// The next lookup, or the next delivery once every name was looked up.
+    fn advance(&mut self) -> Option<Step> {
+        if let Some(name) = self.pending.pop_front() {
+            let step = (self.request)(&name);
+            self.asked = Some(name);
+            return Some(step);
+        }
+        if let Some(build) = self.deliveries.take() {
+            self.queue = build(&self.found).into();
+        }
+        self.queue.pop_front()
+    }
+
+    fn next(&mut self) -> Next {
+        self.advance().map_or_else(Next::done, Next::go)
+    }
+}
+
+#[cfg(any(feature = "mattermost", feature = "slack"))]
+impl Sequence for Lookups {
+    fn start(&mut self) -> Step {
+        self.advance()
+            .expect("a lookup is planned only when there is a name to look up")
+    }
+
+    fn answer(&mut self, result: Result<&Response, &TransportError>) -> Next {
+        let Some(name) = self.asked.take() else {
+            // The answer to a delivery.
+            return self.next();
+        };
+        match result.map(self.read) {
+            Ok(Some(found)) => {
+                self.found.insert(name, found);
+                self.next()
+            }
+            // The answer says nothing usable: a failure the plan cannot see.
+            Ok(None) => Next::skip(TransportError::InvalidResponse, self.advance()),
+            // A failed request is already a failure of the plan.
+            Err(_) => self.next(),
+        }
+    }
+}
+
 enum Job {
-    Request(PreparedRequest),
+    Request(PreparedRequest, Option<Check>),
+    /// Something that cannot be sent but that is a failure all the same.
+    #[cfg_attr(not(feature = "slack"), allow(dead_code))]
+    Failure(TransportError),
     #[cfg_attr(not(feature = "_sequence"), allow(dead_code))]
     Sequence(Box<dyn Sequence>),
 }
@@ -167,6 +267,8 @@ pub struct Plan {
     queued: Option<Step>,
     /// What the request that was handed out last is for.
     role: Role,
+    /// How to read the answer to the request that was handed out last.
+    check: Option<Check>,
     /// Whether a request was handed out and its result is still due.
     awaiting: bool,
     outcomes: Vec<Outcome>,
@@ -179,6 +281,7 @@ impl Plan {
             current: None,
             queued: None,
             role: Role::Delivery,
+            check: None,
             awaiting: false,
             outcomes: Vec::new(),
         }
@@ -186,7 +289,26 @@ impl Plan {
 
     /// A plan of independent requests.
     pub(crate) fn requests(requests: Vec<PreparedRequest>) -> Self {
-        Self::new(requests.into_iter().map(Job::Request).collect())
+        Self::checked(requests, None)
+    }
+
+    /// A plan of independent requests whose answers are checked.
+    pub(crate) fn checked(requests: Vec<PreparedRequest>, check: Option<Check>) -> Self {
+        Self::new(
+            requests
+                .into_iter()
+                .map(|request| Job::Request(request, check))
+                .collect(),
+        )
+    }
+
+    /// Add a failure after what is already planned, for a part of the
+    /// notification that cannot be sent.
+    #[must_use]
+    #[cfg_attr(not(feature = "slack"), allow(dead_code))]
+    pub(crate) fn failed(mut self, error: TransportError) -> Self {
+        self.jobs.push_back(Job::Failure(error));
+        self
     }
 
     /// Add a sequence after what is already planned.
@@ -207,16 +329,22 @@ impl Plan {
         }
         let step = match self.queued.take() {
             Some(step) => step,
-            None => match self.jobs.pop_front()? {
-                Job::Request(request) => Step::delivery(request),
-                Job::Sequence(mut sequence) => {
-                    let first = sequence.start();
-                    self.current = Some(sequence);
-                    first
+            None => loop {
+                match self.jobs.pop_front()? {
+                    Job::Request(request, check) => {
+                        break Step::delivery(request).checked(check);
+                    }
+                    Job::Failure(error) => self.outcomes.push(Outcome::Failed(error)),
+                    Job::Sequence(mut sequence) => {
+                        let first = sequence.start();
+                        self.current = Some(sequence);
+                        break first;
+                    }
                 }
             },
         };
         self.role = step.role;
+        self.check = step.check;
         self.awaiting = true;
         Some(step.request)
     }
@@ -228,6 +356,10 @@ impl Plan {
             return;
         }
         self.awaiting = false;
+        let result = match (result, self.check) {
+            (Ok(response), Some(check)) if !check(&response) => Err(TransportError::Rejected),
+            (result, _) => result,
+        };
         let next = self
             .current
             .as_mut()
@@ -254,6 +386,13 @@ impl Plan {
     pub fn finish(mut self) -> Vec<Outcome> {
         if self.awaiting {
             self.report(Err(TransportError::Connection));
+        }
+        // A failure is known without sending anything, so it counts even when
+        // nobody asked for the requests that come after it.
+        for job in std::mem::take(&mut self.jobs) {
+            if let Job::Failure(error) = job {
+                self.outcomes.push(Outcome::Failed(error));
+            }
         }
         if self.outcomes.is_empty() {
             vec![Outcome::NothingToSend]
@@ -455,6 +594,62 @@ mod tests {
         ))]));
         let (_, outcomes) = drive(plan, Vec::new());
         assert_eq!(outcomes, [Outcome::NothingToSend]);
+    }
+
+    fn says_ok(response: &Response) -> bool {
+        response.body.expose() == b"ok"
+    }
+
+    #[test]
+    fn a_check_turns_an_answer_into_a_rejection() {
+        let plan = Plan::checked(
+            vec![request("https://a.example"), request("https://b.example")],
+            Some(says_ok),
+        );
+        let answers = vec![
+            Ok(Response::with_body(200, "ok")),
+            Ok(Response::with_body(200, "no")),
+        ];
+        let (_, outcomes) = drive(plan, answers);
+        assert_eq!(
+            outcomes,
+            [
+                Outcome::Delivered(Response::with_body(200, "ok")),
+                Outcome::Failed(TransportError::Rejected),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_step_can_have_its_answer_checked() {
+        let steps = vec![
+            Step::setup(request("https://example.com/lookup")).checked(Some(says_ok)),
+            Step::delivery(request("https://example.com/post")),
+        ];
+        let plan = Plan::requests(Vec::new()).then(Script::new(steps));
+        let (sent, outcomes) = drive(plan, vec![Ok(Response::with_body(200, "no"))]);
+        assert_eq!(sent, ["https://example.com/lookup"]);
+        assert_eq!(outcomes, [Outcome::Failed(TransportError::Rejected)]);
+    }
+
+    #[test]
+    fn a_planned_failure_is_an_outcome_in_its_place() {
+        let plan = Plan::requests(vec![request("https://a.example")])
+            .failed(TransportError::InvalidRequest);
+        let (sent, outcomes) = drive(plan, Vec::new());
+        assert_eq!(sent, ["https://a.example"]);
+        assert_eq!(
+            outcomes,
+            [
+                Outcome::Delivered(Response::new(200)),
+                Outcome::Failed(TransportError::InvalidRequest),
+            ]
+        );
+        let only_failure = Plan::requests(Vec::new()).failed(TransportError::InvalidRequest);
+        assert_eq!(
+            only_failure.finish(),
+            [Outcome::Failed(TransportError::InvalidRequest)]
+        );
     }
 
     #[test]

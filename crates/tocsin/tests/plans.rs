@@ -383,3 +383,149 @@ mod mattermost {
         assert_eq!(transport.calls(), ["POST /hooks/FAKE_hook"]);
     }
 }
+
+#[cfg(feature = "slack")]
+mod slack {
+    use serde_json::json;
+    use tocsin::{Notification, Outcome, Response, TransportError};
+
+    use super::*;
+
+    const BOT: &str = "slack://xoxb-1234-1234-abc124/bob@example.com/%23ops/ann@example.org";
+    const HOOK: &str = "slack://TFAKE1/BFAKE2/CFAKE3/ops";
+
+    /// Slack's Web API: a user for every address, and `ok` for the rest.
+    #[allow(clippy::unnecessary_wraps, reason = "the shape a transport answers in")]
+    fn api(request: &PreparedRequest) -> Result<Response, TransportError> {
+        let url = request.url.expose();
+        let answer = match url.split_once("email=") {
+            Some((_, address)) => {
+                let user = address.split("%40").next().unwrap_or("");
+                json!({"ok": true, "user": {"id": format!("U-{user}")}})
+            }
+            None => json!({"ok": true, "channel": "C1"}),
+        };
+        Ok(Response::with_body(200, answer.to_string()))
+    }
+
+    fn failures(report: &tocsin::Report) -> Vec<Outcome> {
+        report.failures().map(|r| r.outcome.clone()).collect()
+    }
+
+    #[test]
+    fn a_bot_looks_users_up_by_e_mail_before_messaging_them() {
+        let mut transport = Scripted::new(api);
+        let report = notifier(BOT).send(&Notification::new("Body"), &mut transport);
+
+        assert!(report.is_success(), "{:?}", failures(&report));
+        assert_eq!(report.receipts().len(), 3, "the lookups are not receipts");
+        assert_eq!(
+            transport.calls(),
+            [
+                "POST /api/chat.postMessage",
+                "GET /api/users.lookupByEmail?email=ann%40example.org",
+                "GET /api/users.lookupByEmail?email=bob%40example.com",
+                "POST /api/chat.postMessage",
+                "POST /api/chat.postMessage",
+            ]
+        );
+        let channels: Vec<_> = [0, 3, 4]
+            .map(|at| json_body(&transport.seen[at])["channel"].clone())
+            .into();
+        assert_eq!(channels, [json!("#ops"), json!("U-ann"), json!("U-bob")]);
+        for request in &transport.seen {
+            assert_eq!(
+                request.headers["Authorization"].expose(),
+                "Bearer xoxb-1234-1234-abc124"
+            );
+        }
+    }
+
+    #[test]
+    fn an_e_mail_address_is_encoded_like_a_query_value() {
+        let mut transport = Scripted::new(api);
+        let service = "slack://xoxb-1234-1234-abc124/a+b@example.com";
+        notifier(service).send(&Notification::new("Body"), &mut transport);
+        assert_eq!(
+            transport.calls()[0],
+            "GET /api/users.lookupByEmail?email=a%2Bb%40example.com"
+        );
+    }
+
+    #[test]
+    fn an_address_that_cannot_be_resolved_does_not_keep_the_others_from_going_out() {
+        // Missing scope: Slack answers 200, but not `ok`.
+        let mut transport = Scripted::new(|request: &PreparedRequest| {
+            if request.url.expose().ends_with("ann%40example.org") {
+                Ok(Response::with_body(
+                    200,
+                    r#"{"ok":false,"error":"missing_scope"}"#,
+                ))
+            } else {
+                api(request)
+            }
+        });
+        let report = notifier(BOT).send(&Notification::new("Body"), &mut transport);
+        // The channel, both lookups, and the one message that could be sent.
+        assert_eq!(transport.seen.len(), 4);
+        assert_eq!(report.receipts().len(), 3);
+        assert_eq!(
+            failures(&report),
+            [Outcome::Failed(TransportError::Rejected)]
+        );
+    }
+
+    #[test]
+    fn a_bot_message_slack_did_not_accept_is_a_failure() {
+        for answer in [
+            r#"{"ok":false,"error":"channel_not_found"}"#,
+            "not json",
+            "",
+        ] {
+            let mut transport =
+                Scripted::new(|_: &PreparedRequest| Ok(Response::with_body(200, answer)));
+            let report = notifier("slack://xoxb-1234-1234-abc124/ops")
+                .send(&Notification::new("Body"), &mut transport);
+            assert_eq!(
+                failures(&report),
+                [Outcome::Failed(TransportError::Rejected)],
+                "answer: {answer}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_webhook_has_to_answer_ok() {
+        for (answer, delivered) in [("ok", true), ("invalid_token", false), ("", false)] {
+            let mut transport =
+                Scripted::new(|_: &PreparedRequest| Ok(Response::with_body(200, answer)));
+            let report = notifier(HOOK).send(&Notification::new("Body"), &mut transport);
+            assert_eq!(report.is_success(), delivered, "answer: {answer}");
+        }
+    }
+
+    #[test]
+    fn targets_that_cannot_be_used_are_failures_not_silence() {
+        let mut transport = Scripted::new(|_: &PreparedRequest| Ok(Response::with_body(200, "ok")));
+        // An address needs a bot to look it up, and `bad!name` is no channel.
+        let url = "slack://TFAKE1/BFAKE2/CFAKE3/ops/bob@example.com/bad!name";
+        let report = notifier(url).send(&Notification::new("Body"), &mut transport);
+        assert_eq!(transport.seen.len(), 1, "only the channel is sent to");
+        assert_eq!(report.receipts().len(), 3);
+        assert_eq!(
+            failures(&report),
+            [
+                Outcome::Failed(TransportError::InvalidRequest),
+                Outcome::Failed(TransportError::InvalidRequest),
+            ]
+        );
+    }
+
+    #[test]
+    fn workflows_only_need_a_good_status() {
+        let mut transport = Scripted::new(|_: &PreparedRequest| Ok(Response::new(200)));
+        let url = "slack://TFAKE1/Ft07XXXX/XXXXXXXX/YYYYYYYY/?mode=workflow";
+        let report = notifier(url).send(&Notification::new("Body"), &mut transport);
+        assert!(report.is_success());
+    }
+}

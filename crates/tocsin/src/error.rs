@@ -48,6 +48,9 @@ pub enum TransportError {
     /// The service answered, but not in a way the next request could be built
     /// from, such as a login answer without a token.
     InvalidResponse,
+    /// The service answered without an error status but said that it did not
+    /// accept the notification, as Slack does with `"ok": false`.
+    Rejected,
 }
 
 impl fmt::Display for TransportError {
@@ -59,6 +62,7 @@ impl fmt::Display for TransportError {
             Self::InvalidRequest => f.write_str("invalid prepared request"),
             Self::UnsupportedMethod => f.write_str("unsupported HTTP method"),
             Self::InvalidResponse => f.write_str("unexpected notification service response"),
+            Self::Rejected => f.write_str("notification rejected by the service"),
         }
     }
 }

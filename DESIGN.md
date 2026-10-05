@@ -168,7 +168,15 @@ By service:
   parses) and returns `TransportError::UnsupportedMethod`. Form `attach-as` is
   read only.
 - Teams (workflows) and Slack: the `template=` option, a file of cards or blocks,
-  is refused. Slack e-mail targets need a lookup request and are skipped.
+  is refused.
+- Slack: a bot resolves an e-mail address target with `users.lookupByEmail`
+  first, once for each address and before the first message (Apprise caches it).
+  Apprise's answer check is kept: a webhook has to answer `ok`, the Web API has
+  to say `"ok": true`, otherwise the request is a `TransportError::Rejected`,
+  where a client that reads only the status would call it delivered. A target
+  that cannot be used (an address without a bot, or something that is no channel
+  name) is a failure in the report, as in Apprise, not silence. The Slack e-mail
+  address pattern is Apprise's `GET_EMAIL_RE`.
 - Mattermost: in bot mode a channel written as a name is looked up in the team
   first, once for each name and before the first post (Apprise interleaves the
   lookups with the posts and caches them). A name that cannot be resolved is a

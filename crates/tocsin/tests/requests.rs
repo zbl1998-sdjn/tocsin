@@ -627,7 +627,7 @@ fn pushover_devices_groups_priority_and_encryption() {
 #[test]
 fn slack_webhook_bot_blocks_and_workflow_requests() {
     // A webhook: channels come out sorted, a thread follows a colon, and an
-    // e-mail address would need a lookup request, so it is skipped.
+    // e-mail address would need a lookup request, so `prepare` skips it.
     let url = "slack://TFAKE1/BFAKE2/CFAKE3/#ops/@ann/+C123:1700.5/dev@example.com";
     let service: Service = url.parse().expect("parse");
     let requests = service.prepare(&Notification::new("a <b> & c").title("T & T"));

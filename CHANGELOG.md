@@ -28,6 +28,12 @@ follows [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   target, log out.
 - Mattermost bot mode: channels written as names are looked up in the team
   before posting.
+- Slack bot mode: e-mail address targets are resolved to users first.
+- `TransportError::Rejected`: Slack answered `200` but not with the `ok` that
+  Apprise requires (the webhook text `ok`, or `"ok": true` from the Web API), so
+  the message is reported as not delivered.
+- A Slack target that cannot be used is a failure in the report instead of being
+  skipped without a word.
 
 ## [0.1.0] - 2026-10-05
 
