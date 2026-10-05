@@ -18,7 +18,7 @@ default = ["all-services", "ureq"]
 # Every service tocsin supports.
 all-services = [
     "telegram", "discord", "ntfy", "gotify", "json", "form", "workflows",
-    "mattermost", "rocketchat", "pushover", "slack", "prowl", "ifttt", "pushbullet",
+    "mattermost", "rocketchat", "pushover", "slack", "prowl", "ifttt", "pushbullet", "zulip",
 ]
 # A blocking HTTP transport.
 ureq = ["dep:ureq"]
@@ -40,9 +40,10 @@ mattermost = ["_services", "_native", "_sequence", "_lookups", "_multipart", "de
 rocketchat = ["_services", "_sequence", "dep:regex", "_verify", "_query", "_list", "_flag", "_paths", "_format", "_merged"]
 pushover = ["_services", "_multipart", "dep:regex", "_token", "_pairs", "_list", "_flag", "_paths", "_any_host", "_format", "_parts"]
 ifttt = ["_services", "_native", "_token", "_pairs_iter", "_quote", "_list", "_optional_host", "_parts"]
+zulip = ["_services", "dep:base64", "_validate", "_email", "_channels", "_pairs", "_paths", "_list", "_any_host", "_parts"]
 pushbullet = ["_services", "_sequence", "_multipart", "dep:base64", "_token", "_paths", "_list", "_any_host", "_email", "_parts"]
 prowl = ["_services", "_validate", "_pairs", "_paths", "_any_host", "_parts"]
-slack = ["_services", "_email", "_native", "_sequence", "_lookups", "_multipart", "_validate", "_query", "_list", "_flag", "_to_map", "_paths", "_payload", "_optional_host", "_format", "_parts"]
+slack = ["_services", "_email", "_channels", "_native", "_sequence", "_lookups", "_multipart", "_validate", "_query", "_list", "_flag", "_to_map", "_paths", "_payload", "_optional_host", "_format", "_parts"]
 
 # Internal features. Set by every service.
 _services = []
@@ -60,6 +61,8 @@ _validate = ["dep:regex"]
 _verify = ["dep:regex"]
 # Encoding a query string value the way Python's `requests` does.
 _query = []
+# Splitting a list of channels the way Apprise does.
+_channels = []
 # Apprise's check for an e-mail address.
 _email = ["dep:regex"]
 # Encoding a path segment the same way.

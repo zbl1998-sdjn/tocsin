@@ -318,6 +318,16 @@ pub(crate) fn list(s: &str) -> Vec<String> {
         .collect()
 }
 
+/// Split on Apprise's `CHANNEL_LIST_DELIM`: whitespace, `,`, `#`, `\` and `/`.
+/// Unlike [`list`], this neither sorts nor removes duplicates.
+#[cfg(feature = "_channels")]
+pub(crate) fn channel_list(text: &str) -> Vec<String> {
+    text.split([' ', '\t', '\r', '\n', ',', '#', '\\', '/'])
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 /// Apprise's lenient boolean: only the first two letters matter.
 pub(crate) fn bool_value(value: &str) -> bool {
     let lower: String = value.chars().take(2).flat_map(char::to_lowercase).collect();

@@ -84,7 +84,8 @@ def normalize(obj):
                     "NotifySlack": "slack",
                     "NotifyProwl": "prowl",
                     "NotifyIFTTT": "ifttt",
-                    "NotifyPushBullet": "pushbullet"}[type(obj).__name__],
+                    "NotifyPushBullet": "pushbullet",
+                    "NotifyZulip": "zulip"}[type(obj).__name__],
         "host": obj.host, "port": obj.port, "user": obj.user,
         "password": obj.password, "secure": obj.secure,
         "format": list(obj.notify_format) if isinstance(obj.notify_format, tuple)
@@ -148,6 +149,10 @@ def normalize(obj):
         base.update(webhook_id=obj.webhook_id, events=obj.events)
     elif base["service"] == "pushbullet":
         base.update(accesstoken=obj.accesstoken, targets=list(obj.targets))
+    elif base["service"] == "zulip":
+        base.update(botname=obj.botname, organization=obj.organization,
+                    hostname=obj.hostname, token=obj.token,
+                    targets=list(obj.targets))
     elif base["service"] == "mattermost":
         base.update(mode=obj.mode, token=obj.token, path=obj.fullpath,
                     targets=[list(t) for t in obj.targets],

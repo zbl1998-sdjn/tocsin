@@ -35,6 +35,8 @@ enum Inner {
     Ifttt(crate::services::ifttt::Ifttt),
     #[cfg(feature = "pushbullet")]
     Pushbullet(crate::services::pushbullet::Pushbullet),
+    #[cfg(feature = "zulip")]
+    Zulip(crate::services::zulip::Zulip),
 }
 
 /// One notification destination, parsed from an Apprise-compatible URL such as
@@ -127,6 +129,9 @@ impl Service {
             #[cfg(feature = "pushbullet")]
             "pbul" => crate::services::pushbullet::parse(input)
                 .map(|(options, service)| Self::new(options, Inner::Pushbullet(service))),
+            #[cfg(feature = "zulip")]
+            "zulip" => crate::services::zulip::parse(input)
+                .map(|(options, service)| Self::new(options, Inner::Zulip(service))),
             _ => Err(ParseError::UnsupportedService),
         }
     }
@@ -168,6 +173,8 @@ impl Service {
             Inner::Ifttt(_) => "ifttt",
             #[cfg(feature = "pushbullet")]
             Inner::Pushbullet(_) => "pushbullet",
+            #[cfg(feature = "zulip")]
+            Inner::Zulip(_) => "zulip",
         }
     }
 
@@ -221,6 +228,8 @@ impl Service {
             Inner::Ifttt(ref service) => service.prepare(&self.options, notification),
             #[cfg(feature = "pushbullet")]
             Inner::Pushbullet(ref service) => service.prepare(&self.options, notification),
+            #[cfg(feature = "zulip")]
+            Inner::Zulip(ref service) => service.prepare(&self.options, notification),
         }
     }
 
@@ -292,6 +301,8 @@ impl Service {
             Inner::Ifttt(ref service) => service.compat(&mut map),
             #[cfg(feature = "pushbullet")]
             Inner::Pushbullet(ref service) => service.compat(&mut map),
+            #[cfg(feature = "zulip")]
+            Inner::Zulip(ref service) => service.compat(&mut map),
         }
         serde_json::Value::Object(map)
     }

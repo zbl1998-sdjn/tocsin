@@ -137,14 +137,6 @@ fn read_user_id(response: &Response) -> Option<String> {
     Some(answer.get("user")?.get("id")?.as_str()?.to_owned())
 }
 
-/// Apprise's `CHANNEL_LIST_DELIM`: also splits on `#`.
-fn channel_list(text: &str) -> Vec<String> {
-    text.split([' ', '\t', '\r', '\n', ',', '#', '\\', '/'])
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
 /// The text of a token, if there is one.
 #[cfg(feature = "compat")]
 fn exposed(token: Option<&SecretString>) -> Option<&str> {
@@ -271,7 +263,7 @@ fn locate(raw: &grammar::Raw) -> (Found, Vec<String>) {
         .query
         .get("token")
         .filter(|s| !s.is_empty())
-        .map(|s| channel_list(&grammar::decode(s)))
+        .map(|s| grammar::channel_list(&grammar::decode(s)))
     {
         let mut items = list.into_iter();
         let first = items.next();
@@ -302,7 +294,7 @@ pub(crate) fn parse(input: &str) -> Result<(Options, Slack), ParseError> {
     };
     let (found, mut targets) = locate(&raw);
     if let Some(to) = argument("to") {
-        targets.extend(channel_list(&to));
+        targets.extend(grammar::channel_list(&to));
     }
     if raw.query.get("template").is_some_and(|s| !s.is_empty()) {
         return Err(ParseError::InvalidOption);

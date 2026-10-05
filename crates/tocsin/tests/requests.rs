@@ -789,6 +789,50 @@ fn pushbullet_pushes_a_note_to_every_target() {
     assert_eq!(body(&requests[0])["device_iden"], json!("ALL_DEVICES"));
 }
 
+#[cfg(feature = "zulip")]
+#[test]
+fn zulip_posts_a_form_to_every_stream_and_user() {
+    let key = "a".repeat(32);
+    let url = format!("zulip://goober-bot@apprise/{key}/%23dev/bob@example.com");
+    let service: Service = url.parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 2);
+    for request in &requests {
+        assert_eq!(
+            request.url.expose(),
+            "https://apprise.zulipchat.com/api/v1/messages"
+        );
+        assert_eq!(
+            request.headers["Content-Type"].expose(),
+            "application/x-www-form-urlencoded; charset=utf-8"
+        );
+        // The bot is `goober-bot@organization.host`, with the token as the password.
+        assert_eq!(
+            request.headers["Authorization"].expose(),
+            "Basic Z29vYmVyLWJvdEBhcHByaXNlLnp1bGlwY2hhdC5jb206YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE="
+        );
+    }
+    assert_eq!(
+        requests[0].body.text(),
+        "subject=Title&content=Body&type=stream&to=%23dev"
+    );
+    assert_eq!(
+        requests[1].body.text(),
+        "subject=Title&content=Body&type=private&to=bob%40example.com"
+    );
+
+    // Another server, and the default stream.
+    let service: Service = format!("zulip://bot@chat.example.com/{key}")
+        .parse()
+        .expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(
+        requests[0].url.expose(),
+        "https://chat.example.com/api/v1/messages"
+    );
+    assert!(requests[0].body.text().ends_with("&type=stream&to=general"));
+}
+
 #[cfg(feature = "ifttt")]
 #[test]
 fn ifttt_triggers_every_event_with_the_three_values() {
@@ -848,6 +892,7 @@ fn credentials_in_urls_never_show_up_in_formatting() {
         "prowl://FAKE_user:FAKE_password@FAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKE0/FAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKE1",
         "ifttt://FAKE_token@FAKE_event?+key=FAKE_query_token",
         "pbul://FAKE_token/FAKE_device?to=FAKE_password",
+        "zulip://FAKE_user@FAKE_org/FAKEtokenFAKEtokenFAKEtokenFAKE0/FAKE_stream?to=FAKE_password",
     ] {
         if let Ok(service) = url.parse::<Service>() {
             let requests = service.prepare(&notification("body"));
@@ -859,6 +904,7 @@ fn credentials_in_urls_never_show_up_in_formatting() {
                 "FAKE_token",
                 "FAKE_id",
                 "FAKEKEYFAKEKEY",
+                "FAKEtokenFAKEtoken",
             ] {
                 assert!(!output.contains(secret), "{url}: leaked {secret}");
             }

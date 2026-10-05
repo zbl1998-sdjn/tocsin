@@ -35,3 +35,5 @@ pub(crate) mod telegram;
 pub(crate) mod webhook;
 #[cfg(feature = "workflows")]
 pub(crate) mod workflows;
+#[cfg(feature = "zulip")]
+pub(crate) mod zulip;
