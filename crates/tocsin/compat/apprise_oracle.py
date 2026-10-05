@@ -85,7 +85,8 @@ def normalize(obj):
                     "NotifyProwl": "prowl",
                     "NotifyIFTTT": "ifttt",
                     "NotifyPushBullet": "pushbullet",
-                    "NotifyZulip": "zulip"}[type(obj).__name__],
+                    "NotifyZulip": "zulip",
+                    "NotifyXML": "xml"}[type(obj).__name__],
         "host": obj.host, "port": obj.port, "user": obj.user,
         "password": obj.password, "secure": obj.secure,
         "format": list(obj.notify_format) if isinstance(obj.notify_format, tuple)
@@ -163,6 +164,10 @@ def normalize(obj):
                     params=obj.params, payload=obj.payload_extras,
                     payload_map=obj.payload_map, attach_as=obj.attach_as,
                     attach_multi=obj.attach_multi_support)
+    elif base["service"] == "xml":
+        base.update(method=obj.method, path=obj.fullpath, headers=obj.headers,
+                    params=obj.params, payload=obj.payload_extras,
+                    overrides=obj.payload_overrides, xsd_url=obj.xsd_url)
     elif base["service"] == "json":
         base.update(method=obj.method, path=obj.fullpath, headers=obj.headers,
                     params=obj.params, payload=obj.payload_extras)

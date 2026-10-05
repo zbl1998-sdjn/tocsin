@@ -31,9 +31,11 @@ pub(crate) mod rocketchat;
 pub(crate) mod slack;
 #[cfg(feature = "telegram")]
 pub(crate) mod telegram;
-#[cfg(any(feature = "json", feature = "form"))]
+#[cfg(feature = "_webhook")]
 pub(crate) mod webhook;
 #[cfg(feature = "workflows")]
 pub(crate) mod workflows;
+#[cfg(feature = "xml")]
+pub(crate) mod xml;
 #[cfg(feature = "zulip")]
 pub(crate) mod zulip;

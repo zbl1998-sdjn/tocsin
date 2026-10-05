@@ -5,7 +5,8 @@
     feature = "ntfy",
     feature = "pushover",
     feature = "telegram",
-    feature = "discord"
+    feature = "discord",
+    feature = "xml"
 ))]
 
 #[cfg(any(feature = "json", feature = "ntfy"))]
@@ -20,7 +21,8 @@ fn service(url: &str) -> Service {
     feature = "json",
     feature = "form",
     feature = "ntfy",
-    feature = "pushover"
+    feature = "pushover",
+    feature = "xml"
 ))]
 fn text(content: &str) -> Attachment {
     Attachment::new("a.txt", content.as_bytes().to_vec())
@@ -657,4 +659,31 @@ yz
             ]
         );
     }
+}
+
+#[cfg(feature = "xml")]
+#[test]
+fn xml_webhook_carries_attachments_as_base64_elements() {
+    let notification = Notification::new("Body")
+        .attach(text("hello"))
+        .attach(Attachment::new("", b"x".to_vec()).mime("a/b\"c"));
+    let requests = service("xml://localhost/hook").prepare(&notification);
+    assert_eq!(requests.len(), 1);
+    let body = requests[0].body.text();
+    assert!(
+        body.contains(
+            "<Attachments format=\"base64\">\
+<Attachment filename=\"a.txt\" mimetype=\"text/plain\">aGVsbG8=</Attachment>\
+<Attachment filename=\"file002.dat\" mimetype=\"a/b&quot;c\">eA==</Attachment>\
+</Attachments>"
+        ),
+        "{body}"
+    );
+
+    // Only the first part of a long message has them.
+    let long = Notification::new("word ".repeat(8000)).attach(text("hello"));
+    let requests = service("xml://localhost/hook?overflow=split").prepare(&long);
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].body.text().contains("<Attachments"));
+    assert!(!requests[1].body.text().contains("<Attachments"));
 }

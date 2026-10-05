@@ -12,7 +12,7 @@ use tocsin::{MockTransport, PreparedRequest, SecretString, Transport};
 use serde_json::{Value, json};
 #[cfg(any(feature = "json", feature = "slack"))]
 use tocsin::Kind;
-#[cfg(any(feature = "json", feature = "form"))]
+#[cfg(any(feature = "json", feature = "form", feature = "xml"))]
 use tocsin::Method;
 #[cfg(feature = "_services")]
 use tocsin::{Notification, Service};
@@ -789,6 +789,47 @@ fn pushbullet_pushes_a_note_to_every_target() {
     assert_eq!(body(&requests[0])["device_iden"], json!("ALL_DEVICES"));
 }
 
+#[cfg(feature = "xml")]
+#[test]
+fn xml_webhook_sends_apprises_soap_envelope() {
+    let service: Service = "xml://localhost/hook".parse().expect("parse");
+    let requests = service.prepare(&notification("a <b> & \"c\""));
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].url.expose(), "http://localhost/hook");
+    assert_eq!(
+        requests[0].headers["Content-Type"].expose(),
+        "application/xml"
+    );
+    let expected = "<?xml version='1.0' encoding='utf-8'?>\n\
+<soapenv:Envelope\n    \
+xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\"\n    \
+xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\"\n    \
+xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\n    \
+<soapenv:Body>\n        \
+<Notification xmlns:xsi=\"https://raw.githubusercontent.com/caronc/apprise/master/apprise/assets/NotifyXML-1.1.xsd\">\n            \
+<Version>1.1</Version><Subject>Title</Subject><Message>a &lt;b&gt; &amp; &quot;c&quot;</Message><MessageType>info</MessageType>\n            \n       \
+</Notification>\n    \
+</soapenv:Body>\n\
+</soapenv:Envelope>";
+    assert_eq!(requests[0].body.text(), expected);
+
+    // `:name=value` renames an element, an empty value drops it, and any other
+    // name is a new element. Nothing names the schema then.
+    let url = "xml://localhost/hook?:Message=Msg&:Subject=&:Extra=v&:Bad%20Na!me=1&-p=1&+X-H=2&method=put";
+    let service: Service = url.parse().expect("parse");
+    let request = &service.prepare(&notification("Body"))[0];
+    assert_eq!(request.method, Method::Put);
+    assert_eq!(request.url.expose(), "http://localhost/hook?p=1");
+    assert_eq!(request.headers["X-H"].expose(), "2");
+    let body = request.body.text();
+    assert!(
+        body.contains(
+            "<Notification>\n            <Version>1.1</Version><Msg>Body</Msg><MessageType>info</MessageType><Extra>v</Extra><BadName>1</BadName>"
+        ),
+        "{body}"
+    );
+}
+
 #[cfg(feature = "zulip")]
 #[test]
 fn zulip_posts_a_form_to_every_stream_and_user() {
@@ -893,6 +934,7 @@ fn credentials_in_urls_never_show_up_in_formatting() {
         "ifttt://FAKE_token@FAKE_event?+key=FAKE_query_token",
         "pbul://FAKE_token/FAKE_device?to=FAKE_password",
         "zulip://FAKE_user@FAKE_org/FAKEtokenFAKEtokenFAKEtokenFAKE0/FAKE_stream?to=FAKE_password",
+        "xml://FAKE_user:FAKE_password@127.0.0.1/FAKE_token?+X-Key=FAKE_query_token",
     ] {
         if let Ok(service) = url.parse::<Service>() {
             let requests = service.prepare(&notification("body"));
