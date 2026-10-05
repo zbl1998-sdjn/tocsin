@@ -36,7 +36,7 @@ gotify = ["_services", "_token", "_verify", "_paths", "_parts"]
 json = ["_services", "_webhook", "_parts"]
 form = ["_services", "_webhook", "dep:regex", "_parts"]
 workflows = ["_services", "_validate", "_query", "_verify", "_flag", "_to_map", "_paths", "_payload", "_parts"]
-mattermost = ["_services", "dep:regex", "_token", "_verify", "_list", "_flag", "_paths", "_format", "_merged"]
+mattermost = ["_services", "_sequence", "dep:regex", "_token", "_verify", "_quote", "_list", "_flag", "_paths", "_format", "_merged"]
 rocketchat = ["_services", "_sequence", "dep:regex", "_verify", "_query", "_list", "_flag", "_paths", "_format", "_merged"]
 pushover = ["_services", "dep:regex", "_token", "_pairs", "_list", "_flag", "_paths", "_any_host", "_format", "_parts"]
 slack = ["_services", "_validate", "_list", "_flag", "_to_map", "_paths", "_payload", "_optional_host", "_format", "_parts"]
@@ -53,6 +53,8 @@ _validate = ["dep:regex"]
 _verify = ["dep:regex"]
 # Encoding a query string value the way Python's `requests` does.
 _query = []
+# Encoding a path segment the same way.
+_quote = []
 # The same for a list of key and value pairs.
 _pairs = ["_query"]
 # What the JSON and form webhooks share.

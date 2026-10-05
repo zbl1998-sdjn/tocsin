@@ -32,7 +32,10 @@ use crate::{Outcome, PreparedRequest, Response, TransportError};
 /// What a request in a [`Sequence`] is for, which decides what its result means
 /// for the plan.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(feature = "_sequence"), allow(dead_code))]
+#[allow(
+    dead_code,
+    reason = "a build with only some services leaves some of these unused"
+)]
 pub(crate) enum Role {
     /// Delivers the notification. Its result is an outcome of the plan.
     Delivery,
@@ -50,7 +53,10 @@ pub(crate) struct Step {
     pub(crate) role: Role,
 }
 
-#[cfg_attr(not(feature = "_sequence"), allow(dead_code))]
+#[allow(
+    dead_code,
+    reason = "a build with only some services leaves some of these unused"
+)]
 impl Step {
     pub(crate) fn delivery(request: PreparedRequest) -> Self {
         Self {
@@ -76,13 +82,57 @@ impl Step {
 
 /// What a [`Sequence`] does after an answer.
 #[cfg_attr(not(feature = "_sequence"), allow(dead_code))]
-pub(crate) enum Next {
+pub(crate) struct Next {
+    /// A failure to report, whatever happens next.
+    failure: Option<TransportError>,
+    /// The request to go on with, or `None` to end the sequence.
+    step: Option<Step>,
+}
+
+#[allow(
+    dead_code,
+    reason = "a build with only some services leaves some of these unused"
+)]
+impl Next {
     /// Go on with this request.
-    Go(Step),
+    pub(crate) fn go(step: Step) -> Self {
+        Self {
+            failure: None,
+            step: Some(step),
+        }
+    }
+
     /// Nothing more to send.
-    Done,
+    pub(crate) fn done() -> Self {
+        Self {
+            failure: None,
+            step: None,
+        }
+    }
+
     /// The answer cannot be used: report the failure and stop.
-    Fail(TransportError),
+    pub(crate) fn fail(error: TransportError) -> Self {
+        Self {
+            failure: Some(error),
+            step: None,
+        }
+    }
+
+    /// The answer cannot be used, but the others can still be: report the
+    /// failure and go on with `step`, or stop when there is none.
+    #[cfg_attr(
+        not(feature = "mattermost"),
+        allow(
+            dead_code,
+            reason = "only a lookup can fail without ending the sequence"
+        )
+    )]
+    pub(crate) fn skip(error: TransportError, step: Option<Step>) -> Self {
+        Self {
+            failure: Some(error),
+            step,
+        }
+    }
 }
 
 /// Requests in which each one may depend on the answer to the one before.
@@ -187,13 +237,14 @@ impl Plan {
             (_, Err(error)) => self.outcomes.push(Outcome::Failed(error)),
             (Role::Delivery, Ok(response)) => self.outcomes.push(Outcome::Delivered(response)),
         }
-        match next {
-            Some(Next::Go(step)) => self.queued = Some(step),
-            Some(Next::Fail(error)) => {
+        if let Some(Next { failure, step }) = next {
+            if let Some(error) = failure {
                 self.outcomes.push(Outcome::Failed(error));
-                self.current = None;
             }
-            Some(Next::Done) | None => self.current = None,
+            match step {
+                Some(step) => self.queued = Some(step),
+                None => self.current = None,
+            }
         }
     }
 
@@ -255,13 +306,13 @@ mod tests {
         fn answer(&mut self, result: Result<&Response, &TransportError>) -> Next {
             self.answers.push(result.is_ok());
             if self.fail_after == Some(self.answers.len()) {
-                return Next::Fail(TransportError::InvalidResponse);
+                return Next::fail(TransportError::InvalidResponse);
             }
             // A failed login or lookup leaves nothing to go on with.
             if result.is_err() && self.answers.len() == 1 {
-                return Next::Done;
+                return Next::done();
             }
-            self.steps.pop_front().map_or(Next::Done, Next::Go)
+            self.steps.pop_front().map_or_else(Next::done, Next::go)
         }
     }
 

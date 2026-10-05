@@ -34,12 +34,18 @@ const PATH_QUOTE: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'=');
 
 /// What Python's `requests` leaves alone when it encodes a query string.
-#[cfg(feature = "_query")]
+#[cfg(any(feature = "_query", feature = "_quote"))]
 const FORM_QUOTE: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'.')
     .remove(b'-')
     .remove(b'~');
+
+/// Encode a path segment like Python's `quote(s, safe="")`.
+#[cfg(feature = "_quote")]
+pub(crate) fn quote(s: &str) -> String {
+    utf8_percent_encode(s, FORM_QUOTE).to_string()
+}
 
 /// Encode a query-string key or value like `requests` does: spaces become `+`.
 #[cfg(feature = "_query")]

@@ -3,18 +3,26 @@
 //!
 //! Two modes, chosen with `?mode=`. In `webhook` mode (the default) the token is
 //! an incoming webhook and the targets are channel names. In `bot` mode the
-//! token is a bot access token and the targets are channel ids; a channel
-//! *name* needs a lookup request first, which a pure `prepare` cannot make, so
-//! those targets are skipped.
+//! token is a bot access token and the targets are channel ids, or channel
+//! names, which are looked up in the team first (once for each name, before
+//! anything is posted). The lookup's answer is needed to build the post, so
+//! names only work through [`Service::plan`](crate::Service::plan);
+//! [`Service::prepare`](crate::Service::prepare) skips them.
 
-use std::{fmt::Write as _, sync::LazyLock};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt::Write as _,
+    sync::LazyLock,
+};
 
 use regex::Regex;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::{
-    Format, Notification, ParseError, PreparedRequest, SecretString, grammar, message,
+    Format, Method, Notification, ParseError, Plan, PreparedRequest, RequestPolicy, Response,
+    SecretString, TransportError, grammar, message,
     options::{FormatMode, Options},
+    plan::{Next, Sequence, Step},
 };
 
 static IS_CHANNEL: LazyLock<Regex> =
@@ -140,11 +148,8 @@ pub(crate) fn parse(input: &str) -> Result<(Options, Mattermost), ParseError> {
 }
 
 impl Mattermost {
-    pub(crate) fn prepare(
-        &self,
-        options: &Options,
-        notification: &Notification,
-    ) -> Vec<PreparedRequest> {
+    /// The server's address with the base path, without a trailing slash.
+    fn base(&self, options: &Options) -> String {
         let mut base = format!(
             "{}://{}",
             if options.secure { "https" } else { "http" },
@@ -154,11 +159,43 @@ impl Mattermost {
             write!(base, ":{port}").expect("writing to a String works");
         }
         base.push_str(self.path.trim_end_matches('/'));
-        // Apprise has no separate title here: it goes in front of the body.
+        base
+    }
+
+    /// The message in the pieces that fit one post. Apprise has no separate
+    /// title here: it goes in front of the body.
+    fn pieces(options: &Options, notification: &Notification) -> Vec<String> {
         let format = message::format(options, notification);
         let text = message::merged(notification, format);
+        message::chunks(&text, 4000, options.overflow)
+    }
+
+    /// A bot's post of `piece` to the channel with this id.
+    fn bot_post(
+        &self,
+        base: &str,
+        id: &str,
+        piece: &str,
+        policy: RequestPolicy,
+    ) -> PreparedRequest {
+        let payload = json!({"channel_id": id, "message": piece});
+        let mut request =
+            PreparedRequest::json(format!("{base}/api/v4/posts"), &payload).with_policy(policy);
+        request.headers.insert(
+            "Authorization".to_owned(),
+            SecretString::new(format!("Bearer {}", self.token.expose())),
+        );
+        request
+    }
+
+    pub(crate) fn prepare(
+        &self,
+        options: &Options,
+        notification: &Notification,
+    ) -> Vec<PreparedRequest> {
+        let base = self.base(options);
         let mut requests = Vec::new();
-        for piece in message::chunks(&text, 4000, options.overflow) {
+        for piece in Self::pieces(options, notification) {
             match self.mode {
                 Mode::Webhook => {
                     let url = format!("{base}/hooks/{}", self.token.expose());
@@ -189,19 +226,10 @@ impl Mattermost {
                     }
                 }
                 Mode::Bot => {
-                    let url = format!("{base}/api/v4/posts");
                     for target in &self.targets {
-                        let Target::Id(id) = target else {
-                            continue;
-                        };
-                        let payload = json!({"channel_id": id, "message": piece});
-                        let mut request =
-                            PreparedRequest::json(&url, &payload).with_policy(options.policy());
-                        request.headers.insert(
-                            "Authorization".to_owned(),
-                            SecretString::new(format!("Bearer {}", self.token.expose())),
-                        );
-                        requests.push(request);
+                        if let Target::Id(id) = target {
+                            requests.push(self.bot_post(&base, id, &piece, options.policy()));
+                        }
                     }
                 }
             }
@@ -209,8 +237,36 @@ impl Mattermost {
         requests
     }
 
+    /// [`prepare`](Self::prepare), plus the lookup of every channel that a bot
+    /// was given by name.
+    pub(crate) fn plan(&self, options: &Options, notification: &Notification) -> Plan {
+        let mut names: Vec<String> = Vec::new();
+        for target in &self.targets {
+            if let Target::Name(name) = target {
+                if !names.contains(name) {
+                    names.push(name.clone());
+                }
+            }
+        }
+        let team = options.user.clone().filter(|team| !team.is_empty());
+        let (Mode::Bot, Some(team), false) = (self.mode, team, names.is_empty()) else {
+            return Plan::requests(self.prepare(options, notification));
+        };
+        Plan::requests(Vec::new()).then(Lookups {
+            mattermost: self.clone(),
+            base: self.base(options),
+            team,
+            policy: options.policy(),
+            pieces: Self::pieces(options, notification),
+            pending: names.into(),
+            asked: None,
+            found: HashMap::new(),
+            posts: None,
+        })
+    }
+
     #[cfg(feature = "compat")]
-    pub(crate) fn compat(&self, map: &mut serde_json::Map<String, serde_json::Value>) {
+    pub(crate) fn compat(&self, map: &mut serde_json::Map<String, Value>) {
         let targets: Vec<_> = self
             .targets
             .iter()
@@ -229,6 +285,109 @@ impl Mattermost {
             ("invalid_targets", json!(self.invalid_targets)),
         ] {
             map.insert(key.to_owned(), value);
+        }
+    }
+}
+
+/// A bot that was given channels by name: look every name up, then post to
+/// every channel. A name that cannot be resolved is a failure of its own and
+/// does not keep the others from being posted to.
+struct Lookups {
+    mattermost: Mattermost,
+    base: String,
+    team: String,
+    policy: RequestPolicy,
+    pieces: Vec<String>,
+    /// The names still to look up.
+    pending: VecDeque<String>,
+    /// The name whose answer is awaited.
+    asked: Option<String>,
+    /// The channel id of each name that was resolved.
+    found: HashMap<String, String>,
+    /// The posts still to send, once every name was looked up.
+    posts: Option<VecDeque<PreparedRequest>>,
+}
+
+impl Lookups {
+    fn lookup(&mut self, name: String) -> Step {
+        let url = format!(
+            "{}/api/v4/teams/name/{}/channels/name/{}",
+            self.base,
+            grammar::quote(&self.team),
+            grammar::quote(&name)
+        );
+        let mut request = PreparedRequest::with_body(Method::Get, url, None, Vec::<u8>::new())
+            .with_policy(self.policy);
+        request
+            .headers
+            .insert("Accept".to_owned(), SecretString::new("application/json"));
+        request.headers.insert(
+            "Authorization".to_owned(),
+            SecretString::new(format!("Bearer {}", self.mattermost.token.expose())),
+        );
+        self.asked = Some(name);
+        Step::setup(request)
+    }
+
+    /// The next lookup, or the next post once every name was looked up.
+    fn advance(&mut self) -> Option<Step> {
+        if let Some(name) = self.pending.pop_front() {
+            return Some(self.lookup(name));
+        }
+        if self.posts.is_none() {
+            let mut posts = VecDeque::new();
+            for piece in &self.pieces {
+                for target in &self.mattermost.targets {
+                    let id = match target {
+                        Target::Id(id) => Some(id),
+                        Target::Name(name) => self.found.get(name),
+                    };
+                    if let Some(id) = id {
+                        posts.push_back(self.mattermost.bot_post(
+                            &self.base,
+                            id,
+                            piece,
+                            self.policy,
+                        ));
+                    }
+                }
+            }
+            self.posts = Some(posts);
+        }
+        self.posts
+            .as_mut()
+            .and_then(VecDeque::pop_front)
+            .map(Step::delivery)
+    }
+}
+
+/// The channel id in the answer to a lookup.
+fn read_channel_id(response: &Response) -> Option<String> {
+    let answer: Value = serde_json::from_slice(response.body.expose()).ok()?;
+    let id = answer.get("id")?.as_str()?;
+    (!id.trim().is_empty()).then(|| id.to_owned())
+}
+
+impl Sequence for Lookups {
+    fn start(&mut self) -> Step {
+        self.advance()
+            .expect("a lookup is planned only when there is a name to look up")
+    }
+
+    fn answer(&mut self, result: Result<&Response, &TransportError>) -> Next {
+        let Some(name) = self.asked.take() else {
+            // The answer to a post.
+            return self.advance().map_or_else(Next::done, Next::go);
+        };
+        match result.map(read_channel_id) {
+            Ok(Some(id)) => {
+                self.found.insert(name, id);
+                self.advance().map_or_else(Next::done, Next::go)
+            }
+            // The answer is no channel: a failure the plan cannot see.
+            Ok(None) => Next::skip(TransportError::InvalidResponse, self.advance()),
+            // A failed request is already a failure of the plan.
+            Err(_) => self.advance().map_or_else(Next::done, Next::go),
         }
     }
 }

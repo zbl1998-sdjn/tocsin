@@ -26,6 +26,8 @@ follows [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   block. `MockTransport` implements both transports.
 - Rocket.Chat `basic` mode (user name and password): log in, post to every
   target, log out.
+- Mattermost bot mode: channels written as names are looked up in the team
+  before posting.
 
 ## [0.1.0] - 2026-10-05
 

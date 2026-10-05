@@ -374,7 +374,7 @@ impl Session {
                 PreparedRequest::json(format!("{}/api/v1/chat.postMessage", self.api), &payload)
                     .with_policy(self.policy);
             self.headers(&mut request);
-            return Next::Go(Step::delivery(request));
+            return Next::go(Step::delivery(request));
         }
         self.stage = Stage::Logout;
         let mut request = PreparedRequest::with_body(
@@ -385,7 +385,7 @@ impl Session {
         )
         .with_policy(self.policy);
         self.headers(&mut request);
-        Next::Go(Step::cleanup(request))
+        Next::go(Step::cleanup(request))
     }
 }
 
@@ -425,16 +425,16 @@ impl Sequence for Session {
             Stage::Login => {
                 // A login that failed has nothing to log out of.
                 let Ok(response) = result else {
-                    return Next::Done;
+                    return Next::done();
                 };
                 let Some(auth) = read_login(response) else {
-                    return Next::Fail(TransportError::InvalidResponse);
+                    return Next::fail(TransportError::InvalidResponse);
                 };
                 self.auth = Some(auth);
                 self.next_post()
             }
             Stage::Posting => self.next_post(),
-            Stage::Logout => Next::Done,
+            Stage::Logout => Next::done(),
         }
     }
 }

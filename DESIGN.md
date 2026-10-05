@@ -169,8 +169,10 @@ By service:
   read only.
 - Teams (workflows) and Slack: the `template=` option, a file of cards or blocks,
   is refused. Slack e-mail targets need a lookup request and are skipped.
-- Mattermost: in bot mode a channel written as a name needs a lookup, so only
-  channel ids are used.
+- Mattermost: in bot mode a channel written as a name is looked up in the team
+  first, once for each name and before the first post (Apprise interleaves the
+  lookups with the posts and caches them). A name that cannot be resolved is a
+  failure of its own; the other channels still get the message.
 - Rocket.Chat: the `basic` mode (user and password) logs in, posts to every
   target and logs out, once for every piece of a long message, as Apprise does.
   A login answer without a user id and a token is a failure; Apprise sends the
