@@ -47,6 +47,8 @@ enum Inner {
     Bark(crate::services::bark::Bark),
     #[cfg(feature = "signal")]
     SignalApi(crate::services::signal::SignalApi),
+    #[cfg(feature = "homeassistant")]
+    HomeAssistant(crate::services::homeassistant::HomeAssistant),
 }
 
 /// One notification destination, parsed from an Apprise-compatible URL such as
@@ -157,6 +159,9 @@ impl Service {
             #[cfg(feature = "signal")]
             "signal" | "signals" => crate::services::signal::parse(input)
                 .map(|(options, service)| Self::new(options, Inner::SignalApi(service))),
+            #[cfg(feature = "homeassistant")]
+            "hassio" | "hassios" => crate::services::homeassistant::parse(input)
+                .map(|(options, service)| Self::new(options, Inner::HomeAssistant(service))),
             _ => Err(ParseError::UnsupportedService),
         }
     }
@@ -210,6 +215,8 @@ impl Service {
             Inner::Bark(_) => "bark",
             #[cfg(feature = "signal")]
             Inner::SignalApi(_) => "signal",
+            #[cfg(feature = "homeassistant")]
+            Inner::HomeAssistant(_) => "homeassistant",
         }
     }
 
@@ -275,6 +282,8 @@ impl Service {
             Inner::Bark(ref service) => service.prepare(&self.options, notification),
             #[cfg(feature = "signal")]
             Inner::SignalApi(ref service) => service.prepare(&self.options, notification),
+            #[cfg(feature = "homeassistant")]
+            Inner::HomeAssistant(ref service) => service.prepare(&self.options, notification),
         }
     }
 
@@ -358,6 +367,8 @@ impl Service {
             Inner::Bark(ref service) => service.compat(&mut map),
             #[cfg(feature = "signal")]
             Inner::SignalApi(ref service) => service.compat(&mut map),
+            #[cfg(feature = "homeassistant")]
+            Inner::HomeAssistant(ref service) => service.compat(&mut map),
         }
         serde_json::Value::Object(map)
     }

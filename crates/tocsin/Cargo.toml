@@ -18,7 +18,7 @@ default = ["all-services", "ureq"]
 # Every service tocsin supports.
 all-services = [
     "telegram", "discord", "ntfy", "gotify", "json", "form", "workflows",
-    "mattermost", "rocketchat", "pushover", "slack", "prowl", "ifttt", "pushbullet", "zulip", "xml", "pagerduty", "gchat", "bark", "signal",
+    "mattermost", "rocketchat", "pushover", "slack", "prowl", "ifttt", "pushbullet", "zulip", "xml", "pagerduty", "gchat", "bark", "signal", "homeassistant",
 ]
 # A blocking HTTP transport.
 ureq = ["dep:ureq"]
@@ -48,6 +48,7 @@ pushbullet = ["_services", "_sequence", "_multipart", "dep:base64", "_token", "_
 prowl = ["_services", "_validate", "_pairs", "_paths", "_any_host", "_parts"]
 bark = ["_services", "_basic", "_verify", "_flag", "_list", "_paths", "_parts"]
 signal = ["_services", "dep:regex", "dep:base64", "_basic", "_flag", "_paths", "_any_host", "_format", "_merged"]
+homeassistant = ["_services", "dep:regex", "_token", "_validate", "_list", "_flag", "_paths", "_any_host", "_parts"]
 slack = ["_services", "_email", "_channels", "_native", "_sequence", "_lookups", "_multipart", "_validate", "_query", "_list", "_flag", "_to_map", "_paths", "_payload", "_optional_host", "_format", "_parts"]
 
 # Internal features. Set by every service.

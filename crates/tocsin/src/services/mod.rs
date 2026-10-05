@@ -15,6 +15,8 @@ pub(crate) mod form;
 pub(crate) mod gchat;
 #[cfg(feature = "gotify")]
 pub(crate) mod gotify;
+#[cfg(feature = "homeassistant")]
+pub(crate) mod homeassistant;
 #[cfg(feature = "ifttt")]
 pub(crate) mod ifttt;
 #[cfg(feature = "json")]

@@ -27,7 +27,11 @@ use crate::{
 /// A group, written `@id`, `%40id`, `group.id` or `@group.id`. Only the start
 /// has to match.
 static GROUP: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^\s*(?:(?:@|%40)?group\.|@|%40)(?P<group>[a-z0-9_=-]+)").expect("static regex")
+    // `[a-z0-9_=-]` with Python's `re.I` also takes four letters outside ASCII.
+    Regex::new(
+        r"^[\s\x{1c}-\x{1f}]*(?:(?:@|%40)?(?i:group)\.|@|%40)(?P<group>[A-Za-z0-9_=\-\x{130}\x{131}\x{17f}\x{212a}]+)",
+    )
+    .expect("static regex")
 });
 
 /// How many recipients share a request with `batch=yes`.

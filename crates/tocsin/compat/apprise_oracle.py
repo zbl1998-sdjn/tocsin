@@ -90,7 +90,8 @@ def normalize(obj):
                     "NotifyPagerDuty": "pagerduty",
                     "NotifyGoogleChat": "gchat",
                     "NotifyBark": "bark",
-                    "NotifySignalAPI": "signal"}[type(obj).__name__],
+                    "NotifySignalAPI": "signal",
+                    "NotifyHomeAssistant": "homeassistant"}[type(obj).__name__],
         "host": obj.host, "port": obj.port, "user": obj.user,
         "password": obj.password, "secure": obj.secure,
         "format": list(obj.notify_format) if isinstance(obj.notify_format, tuple)
@@ -197,6 +198,12 @@ def normalize(obj):
         base.update(source=obj.source, targets=list(obj.targets),
                     invalid_targets=list(obj.invalid_targets), batch=obj.batch,
                     status=obj.status)
+    elif base["service"] == "homeassistant":
+        # A target is [domain, service, identities]; the persistent
+        # notification of a URL without targets is [None, None, []].
+        base.update(accesstoken=obj.accesstoken, nid=obj.nid, batch=obj.batch,
+                    targets=[[d, s, list(t)] for d, s, t in obj.targets],
+                    invalid_targets=list(obj._invalid_targets), prefix=obj.prefix)
     elif base["service"] == "json":
         base.update(method=obj.method, path=obj.fullpath, headers=obj.headers,
                     params=obj.params, payload=obj.payload_extras)

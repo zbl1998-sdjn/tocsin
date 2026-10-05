@@ -1201,6 +1201,127 @@ fn signal_finds_numbers_the_way_apprise_does() {
     assert_eq!(service.prepare(&notification("Body")).len(), 3);
 }
 
+#[cfg(feature = "homeassistant")]
+#[test]
+fn home_assistant_creates_a_persistent_notification_without_services() {
+    let service: Service = "hassio://localhost/long.lived.token"
+        .parse()
+        .expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].url.expose(),
+        "http://localhost:8123/api/services/persistent_notification/create"
+    );
+    assert_eq!(
+        requests[0].headers["Authorization"].expose(),
+        "Bearer long.lived.token"
+    );
+    assert_eq!(
+        body(&requests[0]),
+        json!({"title": "Title", "message": "Body"})
+    );
+
+    // A prefix, an id of our own, HTTPS (which has no default port) and no
+    // title.
+    let service: Service = "hassios://example.com/long.lived.token?prefix=/ha/&nid=my-id"
+        .parse()
+        .expect("parse");
+    let requests = service.prepare(&Notification::new("Body"));
+    assert_eq!(
+        requests[0].url.expose(),
+        "https://example.com/ha/api/services/persistent_notification/create"
+    );
+    assert_eq!(
+        body(&requests[0]),
+        json!({"message": "Body", "notification_id": "my-id"})
+    );
+}
+
+#[cfg(feature = "homeassistant")]
+#[test]
+fn home_assistant_calls_each_service_with_its_identities() {
+    let url = "hassios://example.com:8443/long.lived.token/light.turn_on:e1,e2/notify.phone\
+        ?prefix=/ha";
+    let service: Service = url.parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    // What follows the token comes in reverse, as it does in Apprise.
+    let calls: Vec<(String, Value)> = requests
+        .iter()
+        .map(|request| (request.url.expose().to_owned(), body(request)))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            (
+                "https://example.com:8443/ha/api/services/notify/phone".to_owned(),
+                json!({"title": "Title", "message": "Body"})
+            ),
+            (
+                "https://example.com:8443/ha/api/services/light/turn_on".to_owned(),
+                json!({"title": "Title", "message": "Body", "targets": ["e1"]})
+            ),
+            (
+                "https://example.com:8443/ha/api/services/light/turn_on".to_owned(),
+                json!({"title": "Title", "message": "Body", "targets": ["e2"]})
+            ),
+        ]
+    );
+
+    // With batch=yes the identities share a request.
+    let service: Service = format!("{url}&batch=yes").parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 2);
+    assert_eq!(body(&requests[1])["targets"], json!(["e1", "e2"]));
+}
+
+#[cfg(feature = "homeassistant")]
+#[test]
+fn home_assistant_sends_the_token_as_a_bearer_and_ignores_the_users_credentials() {
+    let service: Service = "hassio://user:pw@localhost/long.lived.token"
+        .parse()
+        .expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(
+        requests[0].headers["Authorization"].expose(),
+        "Bearer long.lived.token"
+    );
+}
+
+#[cfg(feature = "homeassistant")]
+#[test]
+fn home_assistant_sends_nothing_when_no_service_is_valid() {
+    let service: Service = "hassio://localhost/long.lived.token/!!!"
+        .parse()
+        .expect("parse");
+    assert!(service.prepare(&notification("Body")).is_empty());
+    // No token is not a Home Assistant URL.
+    assert!("hassio://localhost".parse::<Service>().is_err());
+}
+
+#[cfg(feature = "homeassistant")]
+#[test]
+fn home_assistant_ends_a_list_of_identities_where_apprise_does() {
+    // Apprise's pattern is lazy, so a list of three ends after two and the
+    // third is read as a service of its own. tocsin reads it the same way.
+    let service: Service = "hassio://localhost/long.lived.token/svc:a,b,c"
+        .parse()
+        .expect("parse");
+    let urls: Vec<String> = service
+        .prepare(&notification("Body"))
+        .iter()
+        .map(|request| request.url.expose().to_owned())
+        .collect();
+    assert_eq!(
+        urls,
+        [
+            "http://localhost:8123/api/services/notify/svc",
+            "http://localhost:8123/api/services/notify/svc",
+            "http://localhost:8123/api/services/notify/c",
+        ]
+    );
+}
+
 #[cfg(feature = "_services")]
 #[test]
 fn credentials_in_urls_never_show_up_in_formatting() {
@@ -1226,6 +1347,7 @@ fn credentials_in_urls_never_show_up_in_formatting() {
         "bark://FAKE_user:FAKE_password@127.0.0.1/FAKE_token?group=FAKE_query_token",
         "bark://FAKE_user:FAKE_password@127.0.0.1/FAKE_token?key=FAKE_query_token",
         "signal://FAKE_user:FAKE_password@127.0.0.1/+15550001111/+15550002222?to=FAKE_query_token",
+        "hassio://FAKE_user:FAKE_password@127.0.0.1/FAKE.token.value?nid=FAKE_query_token&to=svc",
     ] {
         if let Ok(service) = url.parse::<Service>() {
             let requests = service.prepare(&notification("body"));
@@ -1238,6 +1360,7 @@ fn credentials_in_urls_never_show_up_in_formatting() {
                 "FAKE_id",
                 "FAKEKEYFAKEKEY",
                 "FAKEtokenFAKEtoken",
+                "FAKE.token.value",
             ] {
                 assert!(!output.contains(secret), "{url}: leaked {secret}");
             }

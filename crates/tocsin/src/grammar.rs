@@ -227,7 +227,7 @@ fn quoted_path(path: &str, url: &str) -> String {
 
 /// Apprise's `split_path`: break on spaces, commas, slashes and backslashes,
 /// then decode each segment.
-fn split_path(fullpath: &str) -> Vec<String> {
+pub(crate) fn split_path(fullpath: &str) -> Vec<String> {
     fullpath
         .trim_start_matches('/')
         .split([' ', '\t', '\r', '\n', ',', '\\', '/'])
