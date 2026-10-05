@@ -1,5 +1,7 @@
 //! `tocsin`: send one notification to many services from Apprise-style URLs.
 
+mod hook;
+
 use std::{
     fs,
     io::{self, IsTerminal, Read, Write},
@@ -23,7 +25,9 @@ const MAX_ATTACHMENT_BYTES: u64 = 50 * 1024 * 1024;
 /// Send one notification to every service URL.
 ///
 /// Exit status: 0 when every request was delivered, 1 when a delivery failed
-/// or a URL had nothing to send to, 2 for a usage error or an invalid URL.
+/// or a URL had nothing to send to, 2 for a usage error or an invalid URL. With
+/// `--hook` it is never 2, because that status blocks the action in a Claude
+/// Code hook.
 #[derive(Parser)]
 #[command(name = "tocsin", version, max_term_width = 100)]
 struct Cli {
@@ -42,9 +46,21 @@ struct Cli {
     #[arg(short, long)]
     title: Option<String>,
 
-    /// The kind of notification.
-    #[arg(short = 'n', long, value_enum, default_value_t = KindArg::Info)]
-    notification_type: KindArg,
+    /// The kind of notification (info unless a hook gives another).
+    #[arg(short = 'n', long, value_enum)]
+    notification_type: Option<KindArg>,
+
+    /// Build the message from the hook of a coding agent: the JSON that Claude
+    /// Code writes to standard input, or the one that Codex gives as the last
+    /// argument. `--body`, `--title` and `-n` still win.
+    #[arg(long, value_enum, value_name = "AGENT")]
+    hook: Option<hook::Agent>,
+
+    /// With `--hook`, add the last message of the agent to the notification. It
+    /// is left out by default, because it can hold code or secrets and a
+    /// notification service is not private.
+    #[arg(long, requires = "hook")]
+    include_message: bool,
 
     /// The format of the body.
     #[arg(short, long, value_enum, default_value_t = FormatArg::Text)]
@@ -109,16 +125,39 @@ impl Transport for DryRun {
 }
 
 fn main() -> ExitCode {
-    match run(Cli::parse()) {
+    let cli = Cli::parse();
+    // Status 2 blocks the action in a Claude Code hook, so a hook gets 1.
+    let failure = if cli.hook.is_some() { 1 } else { 2 };
+    match run(cli) {
         Ok(code) => code,
         Err(message) => {
             let _ = writeln!(io::stderr(), "tocsin: {message}");
-            ExitCode::from(2)
+            ExitCode::from(failure)
         }
     }
 }
 
-fn run(cli: Cli) -> Result<ExitCode, String> {
+fn run(mut cli: Cli) -> Result<ExitCode, String> {
+    // Codex puts its JSON after the arguments of the command, where it looks
+    // like a URL.
+    let payload = cli.hook.and_then(|_| {
+        let at = cli
+            .urls
+            .iter()
+            .position(|argument| argument.trim_start().starts_with('{'))?;
+        Some(cli.urls.remove(at))
+    });
+    let hooked = match cli.hook {
+        Some(agent) => {
+            let payload = match payload {
+                Some(payload) => payload,
+                None => read_stdin()?,
+            };
+            Some(hook::describe(agent, &payload, cli.include_message)?)
+        }
+        None => None,
+    };
+
     let urls = if cli.urls.is_empty() {
         std::env::var("TOCSIN_URLS")
             .unwrap_or_default()
@@ -145,19 +184,25 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         .iter()
         .map(|path| read_attachment(path))
         .collect::<Result<Vec<_>, _>>()?;
-    let body = match cli.body {
-        Some(body) => body,
+    let body = match (cli.body, &hooked) {
+        (Some(body), _) => body,
+        (None, Some(hooked)) => hooked.body.clone(),
         // A file can be sent on its own, so a terminal is not an error then.
-        None if !attachments.is_empty() && io::stdin().is_terminal() => String::new(),
-        None => read_stdin()?,
+        (None, None) if !attachments.is_empty() && io::stdin().is_terminal() => String::new(),
+        (None, None) => read_stdin()?,
     };
     if body.trim().is_empty() && attachments.is_empty() {
         return Err("the message is empty".to_owned());
     }
+    let kind = cli
+        .notification_type
+        .map(Kind::from)
+        .or(hooked.as_ref().map(|hooked| hooked.kind))
+        .unwrap_or_default();
     let mut notification = Notification::new(body)
-        .kind(cli.notification_type.into())
+        .kind(kind)
         .format(cli.input_format.into());
-    if let Some(title) = cli.title {
+    if let Some(title) = cli.title.or(hooked.map(|hooked| hooked.title)) {
         notification = notification.title(title);
     }
     for attachment in attachments {

@@ -322,3 +322,96 @@ fn a_dry_run_is_not_a_failure_for_services_that_read_answers() {
     assert_eq!(text(&output.stdout), "POST https://slack.com\n");
     assert!(text(&output.stderr).contains("dry run"));
 }
+
+/// Run `command` with `input` on its standard input.
+fn run_with_stdin(mut command: Command, input: &str) -> Output {
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input.as_bytes())
+        .expect("write");
+    child.wait_with_output().expect("wait")
+}
+
+const CLAUDE_STOP: &str = r#"{"hook_event_name":"Stop","cwd":"/home/me/proj","last_assistant_message":"FAKE_agent_text"}"#;
+
+#[test]
+fn a_claude_code_hook_is_read_from_standard_input() {
+    let (port, worker) = loopback(200);
+    let url = format!("json://127.0.0.1:{port}/hook");
+    let mut command = tocsin();
+    command.args(["--hook", "claude-code", &url]);
+    let output = run_with_stdin(command, CLAUDE_STOP);
+    let received = worker.join().expect("worker");
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert!(received.contains("Claude Code finished"), "{received}");
+    assert!(received.contains("proj"), "{received}");
+    // What the agent wrote stays out unless it is asked for.
+    assert!(!received.contains("FAKE_agent_text"), "{received}");
+
+    let (port, worker) = loopback(200);
+    let url = format!("json://127.0.0.1:{port}/hook");
+    let mut command = tocsin();
+    command.args(["--hook", "claude-code", "--include-message", &url]);
+    let output = run_with_stdin(command, CLAUDE_STOP);
+    let received = worker.join().expect("worker");
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert!(received.contains("FAKE_agent_text"), "{received}");
+}
+
+#[test]
+fn a_codex_hook_is_the_last_argument_and_explicit_options_win() {
+    let (port, worker) = loopback(200);
+    let url = format!("json://127.0.0.1:{port}/hook");
+    let payload =
+        r#"{"type":"agent-turn-complete","cwd":"/work/api","last-assistant-message":"x"}"#;
+    let output = tocsin()
+        .args(["--hook", "codex", "-t", "mine", &url, payload])
+        .output()
+        .expect("run");
+    let received = worker.join().expect("worker");
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert!(received.contains("mine"), "{received}");
+    assert!(received.contains("api"), "{received}");
+    assert!(!received.contains("Codex finished"), "{received}");
+}
+
+#[test]
+fn a_hook_never_exits_with_two() {
+    // A bad URL and a bad payload are usage errors (2) outside a hook, and
+    // 2 blocks the action in a Claude Code hook.
+    let mut command = tocsin();
+    command.args(["--hook", "claude-code", "nosuch://x"]);
+    let output = run_with_stdin(command, CLAUDE_STOP);
+    assert_eq!(code(&output), 1);
+    assert!(text(&output.stderr).contains("URL 1"));
+
+    let mut command = tocsin();
+    command.args(["--hook", "claude-code", "-d", "ntfy://my-topic"]);
+    let output = run_with_stdin(command, "not json");
+    assert_eq!(code(&output), 1);
+    assert!(text(&output.stderr).contains("not JSON"));
+
+    // A dry run shows the host and sends nothing.
+    let mut command = tocsin();
+    command.args(["--hook", "claude-code", "-d", "ntfy://my-topic"]);
+    let output = run_with_stdin(command, CLAUDE_STOP);
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "POST https://ntfy.sh\n");
+}
+
+#[test]
+fn the_agents_text_cannot_be_asked_for_without_a_hook() {
+    let output = tocsin()
+        .args(["--include-message", "-b", "x", "ntfy://my-topic"])
+        .output()
+        .expect("run");
+    assert_eq!(code(&output), 2);
+}

@@ -14,6 +14,13 @@ follows [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `DESIGN.md`: a Bark URL with `key=` sends nothing, because tocsin does not
   encrypt; Home Assistant gets the token as a bearer token and ignores the
   user and password of the URL.
+- `tocsin --hook claude-code` and `tocsin --hook codex`: build the notification
+  from the hook payload of a coding agent (JSON on standard input for Claude
+  Code, the last argument for Codex): a title for what happened and the project
+  in the body. The agent's own text is added only with `--include-message`. In
+  hook mode the exit status is never 2, which blocks the action in a Claude Code
+  hook. `-n` has no default value any more; it is info unless a hook gives
+  another kind.
 - `tests/live.rs` in `tocsin` and `tocsin-reqwest`: opt-in tests
   (`cargo test --test live -- --ignored`) that send over TLS to `httpbin.org`
   and `ntfy.sh` with both transports and read what arrived.

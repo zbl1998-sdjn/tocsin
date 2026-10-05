@@ -25,6 +25,13 @@ that depend on one (a login, a lookup, an upload) are not shown.
 URLs given on the command line are visible to other users of the machine; put
 URLs that hold tokens in `TOCSIN_URLS`.
 
+For a coding agent, `tocsin --hook claude-code` (Claude Code's `Stop` and
+`Notification` hooks) and `tocsin --hook codex` (Codex's `notify`) build the
+message from the hook's own payload; the agent's text is added only with
+`--include-message`, and the exit status is never 2, which blocks the action in a
+Claude Code hook. See the [repository](https://github.com/zbl1998-sdjn/tocsin)
+for the settings.
+
 Twenty-one services are supported: Telegram, Discord, ntfy, Gotify, Slack,
 Mattermost, Rocket.Chat, Pushover, Pushbullet, Prowl, IFTTT, Zulip, PagerDuty,
 Google Chat, Bark, Signal, Home Assistant, Microsoft Teams (workflows), and a
