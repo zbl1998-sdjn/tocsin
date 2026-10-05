@@ -155,8 +155,9 @@ Everywhere:
 
 By service:
 
-- Telegram: `image`, `album` and `detect` are ignored; with no chat id there is
-  nothing to send, where Apprise would ask the bot for its last chat.
+- Telegram: `image` and `album` are ignored. With no chat id (and `detect` on)
+  the message goes to the sender of the first update `getUpdates` returns, as in
+  Apprise; Apprise also remembers that id between runs, tocsin asks every time.
 - Discord: `wait` is a query parameter, as in Discord's API, not a body field.
   Apprise's internal `allow_mentions` is not sent. `image`, `fields`,
   `footer_logo`, `ping` and `batch` are ignored.

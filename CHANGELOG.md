@@ -29,6 +29,7 @@ follows [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - Mattermost bot mode: channels written as names are looked up in the team
   before posting.
 - Slack bot mode: e-mail address targets are resolved to users first.
+- Telegram without a chat id (`detect`): the bot is asked who wrote to it last.
 - `TransportError::Rejected`: Slack answered `200` but not with the `ok` that
   Apprise requires (the webhook text `ok`, or `"ok": true` from the Web API), so
   the message is reported as not delivered.

@@ -25,7 +25,7 @@
 //! # fn main() {}
 //! ```
 
-#[cfg(any(feature = "mattermost", feature = "slack"))]
+#[cfg(feature = "_lookups")]
 use std::collections::HashMap;
 use std::{collections::VecDeque, fmt};
 
@@ -156,17 +156,17 @@ pub(crate) trait Sequence: Send {
 }
 
 /// What a name that was looked up stands for, by name.
-#[cfg(any(feature = "mattermost", feature = "slack"))]
+#[cfg(feature = "_lookups")]
 type Found = HashMap<String, String>;
 
 /// Builds the deliveries that need the answers to the lookups.
-#[cfg(any(feature = "mattermost", feature = "slack"))]
+#[cfg(feature = "_lookups")]
 type Deliveries = Box<dyn FnOnce(&Found) -> Vec<Step> + Send>;
 
 /// Looks names up, one request each, and then sends the deliveries that are
 /// built from what was found. A name that cannot be resolved is a failure of its
 /// own, and the deliveries that need no lookup still go out.
-#[cfg(any(feature = "mattermost", feature = "slack"))]
+#[cfg(feature = "_lookups")]
 pub(crate) struct Lookups {
     pending: VecDeque<String>,
     /// The name whose answer is awaited.
@@ -180,7 +180,7 @@ pub(crate) struct Lookups {
     queue: VecDeque<Step>,
 }
 
-#[cfg(any(feature = "mattermost", feature = "slack"))]
+#[cfg(feature = "_lookups")]
 impl Lookups {
     /// `names` must not be empty: a plan without a lookup needs no sequence.
     pub(crate) fn new(
@@ -218,7 +218,7 @@ impl Lookups {
     }
 }
 
-#[cfg(any(feature = "mattermost", feature = "slack"))]
+#[cfg(feature = "_lookups")]
 impl Sequence for Lookups {
     fn start(&mut self) -> Step {
         self.advance()

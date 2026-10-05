@@ -1,4 +1,10 @@
 //! Telegram bot messages: `tgram://<bot_token>/<chat_id>[/<chat_id>...]`.
+//!
+//! Without a chat id the message goes to whoever last wrote to the bot, which
+//! Telegram only tells through `getUpdates`. That is a request whose answer the
+//! next one needs, so it works through [`Service::plan`](crate::Service::plan);
+//! [`Service::prepare`](crate::Service::prepare) returns nothing for it. Send the
+//! bot a message first, as Apprise asks you to.
 
 use std::{collections::BTreeMap, sync::LazyLock};
 
@@ -6,8 +12,10 @@ use regex::Regex;
 use serde_json::{Number, Value, json};
 
 use crate::{
-    Format, Notification, ParseError, PreparedRequest, SecretString, grammar, message,
+    Format, Method, Notification, ParseError, Plan, PreparedRequest, Response, SecretString,
+    grammar, message,
     options::{FormatMode, Options},
+    plan::{Lookups, Step},
 };
 
 /// `tgram://[bot]<id>:<secret>/...` is rewritten to the generic grammar by
@@ -26,6 +34,26 @@ static TARGET: LazyLock<Regex> = LazyLock::new(|| {
     )
     .expect("static regex")
 });
+
+/// The name the detected chat is looked up under.
+const OWNER: &str = "owner";
+
+/// The id of the first user who wrote to the bot, in the answer to `getUpdates`.
+/// Like Apprise, this looks at the first update that has a sender, and gives up
+/// when that one has no usable id.
+fn read_owner(response: &Response) -> Option<String> {
+    let answer: Value = serde_json::from_slice(response.body.expose()).ok()?;
+    if !answer.get("ok")?.as_bool()? {
+        return None;
+    }
+    let sender = answer
+        .get("result")?
+        .as_array()?
+        .iter()
+        .find_map(|update| update.get("message")?.get("from"))?;
+    let id = sender.get("id")?.as_number()?.to_string();
+    (id != "0").then_some(id)
+}
 
 #[derive(Clone)]
 enum Chat {
@@ -238,6 +266,52 @@ impl Telegram {
             }
         }
         requests
+    }
+
+    /// [`prepare`](Self::prepare), plus the detection of the chat to write to
+    /// when no chat id was given.
+    pub(crate) fn plan(&self, options: &Options, notification: &Notification) -> Plan {
+        if !(self.targets.is_empty() && self.detect) {
+            return Plan::requests(self.prepare(options, notification));
+        }
+        let url = format!(
+            "https://api.telegram.org/bot{}/getUpdates",
+            self.bot_token.expose()
+        );
+        let policy = options.policy();
+        let (telegram, options, notification) =
+            (self.clone(), options.clone(), notification.clone());
+        Plan::requests(Vec::new()).then(Lookups::new(
+            vec![OWNER.to_owned()],
+            move |_| {
+                // Apprise sends this as a POST without a body.
+                Step::setup(
+                    PreparedRequest::with_body(
+                        Method::Post,
+                        url.as_str(),
+                        Some("application/json"),
+                        Vec::<u8>::new(),
+                    )
+                    .with_policy(policy),
+                )
+            },
+            read_owner,
+            move |found| {
+                let Some(id) = found.get(OWNER).and_then(|id| id.parse::<Number>().ok()) else {
+                    return Vec::new();
+                };
+                let mut detected = telegram;
+                detected.targets = vec![Target {
+                    chat: Chat::Id(id),
+                    topic: detected.topic,
+                }];
+                detected
+                    .prepare(&options, &notification)
+                    .into_iter()
+                    .map(Step::delivery)
+                    .collect()
+            },
+        ))
     }
 
     #[cfg(feature = "compat")]

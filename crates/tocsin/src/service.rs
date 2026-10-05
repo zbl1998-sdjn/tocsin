@@ -206,6 +206,8 @@ impl Service {
     )]
     pub fn plan(&self, notification: &Notification) -> Plan {
         match self.inner {
+            #[cfg(feature = "telegram")]
+            Inner::Telegram(ref service) => service.plan(&self.options, notification),
             #[cfg(feature = "mattermost")]
             Inner::Mattermost(ref service) => service.plan(&self.options, notification),
             #[cfg(feature = "slack")]

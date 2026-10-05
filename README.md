@@ -82,7 +82,7 @@ for request in service.prepare(&Notification::new("Disk almost full")) {
 
 | URL | Service | Applied options | Read but not acted on |
 |---|---|---|---|
-| `tgram://<bot_token>/<chat_id>...` | Telegram | `format`, `silent`, `preview`, `mdv`, `topic` (or `thread`), `to`, `overflow` | `image`, `album`, `detect` |
+| `tgram://<bot_token>/<chat_id>...` | Telegram | `format`, `silent`, `preview`, `mdv`, `topic` (or `thread`), `to`, `overflow`, `detect` | `image`, `album` |
 | `discord://<id>/<token>`, the `discord.com/api/webhooks` address | Discord webhook | `format`, `tts`, `avatar_url`, `avatar`, `flags`, `thread`, `href`, `footer`, `botname`, `overflow` | `image`, `fields`, `footer_logo`, `ping`, `batch` |
 | `ntfy://<topic>`, `ntfys://[user:pass@]host[:port]/<topic>`, `ntfy.sh` addresses | ntfy | `priority`, `click`, `delay`, `email`, `actions`, `token`, `auth`, `mode`, `format=markdown`, `avatar_url`, `overflow` | `tags`, `attach`, `filename` |
 | `gotify://host[:port][/path]/<token>`, `gotifys://` | Gotify | `priority`, `format=markdown`, `overflow` | |

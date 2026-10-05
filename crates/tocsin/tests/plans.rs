@@ -1,6 +1,11 @@
 //! Services whose delivery needs several requests, each built from the answer
 //! to the one before.
-#![cfg(any(feature = "rocketchat", feature = "mattermost"))]
+#![cfg(any(
+    feature = "rocketchat",
+    feature = "mattermost",
+    feature = "slack",
+    feature = "telegram"
+))]
 
 use serde_json::Value;
 use tocsin::{Notifier, PreparedRequest, Response, Transport, TransportError};
@@ -527,5 +532,105 @@ mod slack {
         let url = "slack://TFAKE1/Ft07XXXX/XXXXXXXX/YYYYYYYY/?mode=workflow";
         let report = notifier(url).send(&Notification::new("Body"), &mut transport);
         assert!(report.is_success());
+    }
+}
+
+#[cfg(feature = "telegram")]
+mod telegram {
+    use serde_json::json;
+    use tocsin::{Notification, Outcome, Response, Service, TransportError};
+
+    use super::*;
+
+    const DETECTING: &str = "tgram://123456789:abcdefghijklmn";
+
+    fn updates(
+        answer: &'static str,
+    ) -> impl FnMut(&PreparedRequest) -> Result<Response, TransportError> {
+        move |request: &PreparedRequest| {
+            if request.url.expose().ends_with("/getUpdates") {
+                Ok(Response::with_body(200, answer))
+            } else {
+                Ok(Response::new(200))
+            }
+        }
+    }
+
+    const WROTE: &str = r#"{"ok":true,"result":[
+        {"update_id":1,"edited_message":{}},
+        {"update_id":2,"message":{"from":{"id":9007199254740993,"first_name":"Ann"}}},
+        {"update_id":3,"message":{"from":{"id":7}}}]}"#;
+
+    #[test]
+    fn without_a_chat_id_the_message_goes_to_whoever_wrote_to_the_bot() {
+        let mut transport = Scripted::new(updates(WROTE));
+        let report = notifier(DETECTING).send(&Notification::new("Body"), &mut transport);
+        assert!(report.is_success());
+        assert_eq!(
+            transport.calls(),
+            [
+                "POST /bot123456789:abcdefghijklmn/getUpdates",
+                "POST /bot123456789:abcdefghijklmn/sendMessage",
+            ]
+        );
+        assert!(transport.seen[0].body.is_empty());
+        // The id keeps every digit.
+        assert!(
+            transport.seen[1]
+                .body
+                .text()
+                .contains(r#""chat_id":9007199254740993"#)
+        );
+    }
+
+    #[test]
+    fn the_topic_goes_with_the_detected_chat() {
+        let mut transport = Scripted::new(updates(WROTE));
+        notifier("tgram://123456789:abcdefghijklmn?topic=42")
+            .send(&Notification::new("Body"), &mut transport);
+        assert_eq!(
+            json_body(&transport.seen[1])["message_thread_id"],
+            json!(42)
+        );
+    }
+
+    #[test]
+    fn a_bot_nobody_wrote_to_is_a_failure() {
+        for answer in [
+            r#"{"ok":true,"result":[]}"#,
+            r#"{"ok":false,"description":"Unauthorized"}"#,
+            r#"{"ok":true,"result":[{"message":{"from":{"first_name":"No id"}}}]}"#,
+            r#"{"ok":true,"result":[{"message":{"from":{"id":0}}}]}"#,
+            "not json",
+        ] {
+            let mut transport = Scripted::new(updates(answer));
+            let report = notifier(DETECTING).send(&Notification::new("Body"), &mut transport);
+            assert_eq!(transport.seen.len(), 1, "answer: {answer}");
+            assert_eq!(
+                report
+                    .failures()
+                    .map(|r| r.outcome.clone())
+                    .collect::<Vec<_>>(),
+                [Outcome::Failed(TransportError::InvalidResponse)],
+                "answer: {answer}"
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_is_detected_when_a_chat_is_given_or_detection_is_off() {
+        let mut transport = Scripted::new(updates(WROTE));
+        notifier("tgram://123456789:abcdefghijklmn/55")
+            .send(&Notification::new("Body"), &mut transport);
+        assert_eq!(transport.calls().len(), 1);
+        assert!(transport.calls()[0].ends_with("/sendMessage"));
+
+        let off: Service = "tgram://123456789:abcdefghijklmn?detect=no"
+            .parse()
+            .expect("service");
+        assert_eq!(
+            off.plan(&Notification::new("Body")).finish(),
+            [Outcome::NothingToSend]
+        );
     }
 }
