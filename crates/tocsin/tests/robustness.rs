@@ -87,9 +87,12 @@ fn damaged_fixtures_never_panic() {
             }
         }
     }
-    // A generator that only produced invalid URLs would prove nothing.
+    // A generator that only produced invalid URLs would prove nothing. Services
+    // whose keys have a fixed length (Prowl, Zulip, ...) lose most URLs to the
+    // first damaged character, so a few percent is enough.
+    eprintln!("{parsed} of {tried} damaged URLs parse");
     assert!(
-        tried == 0 || parsed * 10 > tried,
+        tried == 0 || parsed * 50 > tried,
         "only {parsed} of {tried} URLs parsed"
     );
 }
