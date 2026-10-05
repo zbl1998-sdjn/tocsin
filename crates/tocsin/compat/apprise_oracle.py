@@ -87,7 +87,8 @@ def normalize(obj):
                     "NotifyPushBullet": "pushbullet",
                     "NotifyZulip": "zulip",
                     "NotifyXML": "xml",
-                    "NotifyPagerDuty": "pagerduty"}[type(obj).__name__],
+                    "NotifyPagerDuty": "pagerduty",
+                    "NotifyGoogleChat": "gchat"}[type(obj).__name__],
         "host": obj.host, "port": obj.port, "user": obj.user,
         "password": obj.password, "secure": obj.secure,
         "format": list(obj.notify_format) if isinstance(obj.notify_format, tuple)
@@ -175,6 +176,9 @@ def normalize(obj):
                     region_name=obj.region_name, severity=obj.severity,
                     click=obj.click, class_id=obj.class_id, group=obj.group,
                     include_image=obj.include_image, details=obj.details)
+    elif base["service"] == "gchat":
+        base.update(workspace=obj.workspace, webhook_key=obj.webhook_key,
+                    webhook_token=obj.webhook_token, thread_key=obj.thread_key)
     elif base["service"] == "json":
         base.update(method=obj.method, path=obj.fullpath, headers=obj.headers,
                     params=obj.params, payload=obj.payload_extras)

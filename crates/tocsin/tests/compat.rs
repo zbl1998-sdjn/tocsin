@@ -9,7 +9,7 @@ use serde_json::Value;
 use tocsin::Service;
 
 /// Every service with fixtures, and whether this build has it.
-const SERVICES: [(&str, bool); 17] = [
+const SERVICES: [(&str, bool); 18] = [
     ("telegram", cfg!(feature = "telegram")),
     ("discord", cfg!(feature = "discord")),
     ("ntfy", cfg!(feature = "ntfy")),
@@ -27,6 +27,7 @@ const SERVICES: [(&str, bool); 17] = [
     ("zulip", cfg!(feature = "zulip")),
     ("xml", cfg!(feature = "xml")),
     ("pagerduty", cfg!(feature = "pagerduty")),
+    ("gchat", cfg!(feature = "gchat")),
 ];
 
 fn enabled(service: &str) -> bool {

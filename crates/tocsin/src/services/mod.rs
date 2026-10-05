@@ -9,6 +9,8 @@
 pub(crate) mod discord;
 #[cfg(feature = "form")]
 pub(crate) mod form;
+#[cfg(feature = "gchat")]
+pub(crate) mod gchat;
 #[cfg(feature = "gotify")]
 pub(crate) mod gotify;
 #[cfg(feature = "ifttt")]

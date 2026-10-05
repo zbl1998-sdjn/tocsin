@@ -60,6 +60,14 @@ static IFTTT: LazyLock<Regex> = LazyLock::new(|| {
     .expect("static regex")
 });
 
+#[cfg(feature = "gchat")]
+static GCHAT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)^https://chat\.googleapis\.com/v1/spaces/(?P<workspace>[A-Z0-9_-]+)/messages/*(?P<params>.+)$",
+    )
+    .expect("static regex")
+});
+
 /// The notification URL for a web address, if a service claims it.
 #[allow(
     unused_variables,
@@ -73,6 +81,13 @@ pub(crate) fn rewrite(url: &str) -> Option<String> {
             &found["id"],
             &found["token"],
             found.name("params").map_or("", |m| m.as_str())
+        ));
+    }
+    #[cfg(feature = "gchat")]
+    if let Some(found) = GCHAT.captures(url) {
+        return Some(format!(
+            "gchat://{}/{}",
+            &found["workspace"], &found["params"]
         ));
     }
     #[cfg(feature = "ifttt")]

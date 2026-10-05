@@ -41,6 +41,8 @@ enum Inner {
     Xml(crate::services::xml::Xml),
     #[cfg(feature = "pagerduty")]
     PagerDuty(crate::services::pagerduty::PagerDuty),
+    #[cfg(feature = "gchat")]
+    GoogleChat(crate::services::gchat::GoogleChat),
 }
 
 /// One notification destination, parsed from an Apprise-compatible URL such as
@@ -142,6 +144,9 @@ impl Service {
             #[cfg(feature = "pagerduty")]
             "pagerduty" => crate::services::pagerduty::parse(input)
                 .map(|(options, service)| Self::new(options, Inner::PagerDuty(service))),
+            #[cfg(feature = "gchat")]
+            "gchat" => crate::services::gchat::parse(input)
+                .map(|(options, service)| Self::new(options, Inner::GoogleChat(service))),
             _ => Err(ParseError::UnsupportedService),
         }
     }
@@ -189,6 +194,8 @@ impl Service {
             Inner::Xml(_) => "xml",
             #[cfg(feature = "pagerduty")]
             Inner::PagerDuty(_) => "pagerduty",
+            #[cfg(feature = "gchat")]
+            Inner::GoogleChat(_) => "gchat",
         }
     }
 
@@ -248,6 +255,8 @@ impl Service {
             Inner::Xml(ref service) => service.prepare(&self.options, notification),
             #[cfg(feature = "pagerduty")]
             Inner::PagerDuty(ref service) => service.prepare(&self.options, notification),
+            #[cfg(feature = "gchat")]
+            Inner::GoogleChat(ref service) => service.prepare(&self.options, notification),
         }
     }
 
@@ -325,6 +334,8 @@ impl Service {
             Inner::Xml(ref service) => service.compat(&mut map),
             #[cfg(feature = "pagerduty")]
             Inner::PagerDuty(ref service) => service.compat(&mut map),
+            #[cfg(feature = "gchat")]
+            Inner::GoogleChat(ref service) => service.compat(&mut map),
         }
         serde_json::Value::Object(map)
     }

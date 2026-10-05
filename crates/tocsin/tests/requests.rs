@@ -789,6 +789,47 @@ fn pushbullet_pushes_a_note_to_every_target() {
     assert_eq!(body(&requests[0])["device_iden"], json!("ALL_DEVICES"));
 }
 
+#[cfg(feature = "gchat")]
+#[test]
+fn google_chat_posts_text_to_the_space_with_the_webhook_key_and_token() {
+    let service: Service = "gchat://myworkspace/my%20key/to+ken"
+        .parse()
+        .expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 1);
+    // The key and the token are query parameters, encoded like `requests` does.
+    assert_eq!(
+        requests[0].url.expose(),
+        "https://chat.googleapis.com/v1/spaces/myworkspace/messages?token=to%2Bken&key=my+key"
+    );
+    let payload = body(&requests[0]);
+    assert!(
+        payload["text"]
+            .as_str()
+            .is_some_and(|t| t.contains("Title") && t.contains("Body"))
+    );
+    assert!(payload.get("thread").is_none());
+
+    // A thread key replies in the thread, or starts one.
+    let service: Service = "gchat://ws/k/t/mythread".parse().expect("parse");
+    let request = &service.prepare(&notification("Body"))[0];
+    assert!(
+        request
+            .url
+            .expose()
+            .ends_with("&messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD")
+    );
+    assert_eq!(body(request)["thread"], json!({"thread_key": "mythread"}));
+
+    // The web address of the webhook works as it is.
+    let url = "https://chat.googleapis.com/v1/spaces/ws/messages?key=k&token=t&threadKey=th";
+    let service: Service = url.parse().expect("parse");
+    assert_eq!(
+        body(&service.prepare(&notification("Body"))[0])["thread"],
+        json!({"thread_key": "th"})
+    );
+}
+
 #[cfg(feature = "pagerduty")]
 #[test]
 fn pagerduty_triggers_an_event_with_the_kind_as_severity() {
@@ -984,6 +1025,7 @@ fn credentials_in_urls_never_show_up_in_formatting() {
         "zulip://FAKE_user@FAKE_org/FAKEtokenFAKEtokenFAKEtokenFAKE0/FAKE_stream?to=FAKE_password",
         "xml://FAKE_user:FAKE_password@127.0.0.1/FAKE_token?+X-Key=FAKE_query_token",
         "pagerduty://FAKE_user@FAKE_token/FAKE_password?+key=FAKE_query_token",
+        "gchat://FAKE_id/FAKE_token/FAKE_password/FAKE_query_token",
     ] {
         if let Ok(service) = url.parse::<Service>() {
             let requests = service.prepare(&notification("body"));
