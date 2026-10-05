@@ -8,17 +8,29 @@
 //! anything is posted). The lookup's answer is needed to build the post, so
 //! names only work through [`Service::plan`](crate::Service::plan);
 //! [`Service::prepare`](crate::Service::prepare) skips them.
+//!
+//! A bot can also attach files, which it uploads to the channel first and then
+//! names in the post (`file_ids`). The files go with the first part of a long
+//! message, and a channel whose upload failed gets no post, as in Apprise. That
+//! needs the answers to the uploads too, so it is
+//! [`Service::plan`](crate::Service::plan) only as well;
+//! a webhook cannot carry files.
 
-use std::{fmt::Write as _, sync::LazyLock};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt::Write as _,
+    sync::LazyLock,
+};
 
 use regex::Regex;
 use serde_json::{Value, json};
 
 use crate::{
-    Format, Method, Notification, ParseError, Plan, PreparedRequest, RequestPolicy, Response,
-    SecretString, grammar, message,
+    Attachment, Format, Method, Notification, ParseError, Plan, PreparedRequest, RequestPolicy,
+    Response, SecretString, TransportError, grammar, message,
+    multipart::Multipart,
     options::{FormatMode, Options},
-    plan::{Lookups, Step},
+    plan::{Lookups, Next, Sequence, Single, Step},
 };
 
 static IS_CHANNEL: LazyLock<Regex> =
@@ -166,15 +178,20 @@ impl Mattermost {
         message::chunks(&text, 4000, options.overflow)
     }
 
-    /// A bot's post of `piece` to the channel with this id.
+    /// A bot's post of `piece` to the channel with this id, with the files
+    /// that were uploaded to it.
     fn bot_post(
         &self,
         base: &str,
         id: &str,
+        file_ids: &[String],
         piece: &str,
         policy: RequestPolicy,
     ) -> PreparedRequest {
-        let payload = json!({"channel_id": id, "message": piece});
+        let mut payload = json!({"channel_id": id, "message": piece});
+        if !file_ids.is_empty() {
+            payload["file_ids"] = json!(file_ids);
+        }
         let mut request =
             PreparedRequest::json(format!("{base}/api/v4/posts"), &payload).with_policy(policy);
         request.headers.insert(
@@ -224,7 +241,7 @@ impl Mattermost {
                 Mode::Bot => {
                     for target in &self.targets {
                         if let Target::Id(id) = target {
-                            requests.push(self.bot_post(&base, id, &piece, options.policy()));
+                            requests.push(self.bot_post(&base, id, &[], &piece, options.policy()));
                         }
                     }
                 }
@@ -234,8 +251,9 @@ impl Mattermost {
     }
 
     /// [`prepare`](Self::prepare), plus the lookup of every channel that a bot
-    /// was given by name.
+    /// was given by name and the upload of its files.
     pub(crate) fn plan(&self, options: &Options, notification: &Notification) -> Plan {
+        let files: Vec<Attachment> = notification.carried(options.overflow).to_vec();
         let mut names: Vec<String> = Vec::new();
         for target in &self.targets {
             if let Target::Name(name) = target {
@@ -245,20 +263,60 @@ impl Mattermost {
             }
         }
         let team = options.user.clone().filter(|team| !team.is_empty());
-        let (Mode::Bot, Some(team), false) = (self.mode, team, names.is_empty()) else {
+        let needs_plan = !names.is_empty() || !files.is_empty();
+        if self.mode != Mode::Bot || !needs_plan || (!names.is_empty() && team.is_none()) {
             return Plan::requests(self.prepare(options, notification));
-        };
+        }
         let base = self.base(options);
         let policy = options.policy();
         let pieces = Self::pieces(options, notification);
-        let token = self.token.clone();
-        let lookup_base = base.clone();
         let mattermost = self.clone();
+        let deliveries = {
+            let base = base.clone();
+            move |found: &HashMap<String, String>| -> Vec<Box<dyn Sequence>> {
+                // Every piece goes to every channel, in the order they were given.
+                let mut sequences: Vec<Box<dyn Sequence>> = Vec::new();
+                for (part, piece) in pieces.iter().enumerate() {
+                    for target in &mattermost.targets {
+                        let id = match target {
+                            Target::Id(id) => Some(id),
+                            Target::Name(name) => found.get(name),
+                        };
+                        let Some(id) = id else {
+                            continue;
+                        };
+                        // The files go with the first part only.
+                        if part == 0 && !files.is_empty() {
+                            sequences.push(Box::new(ChannelPost::new(
+                                &mattermost,
+                                (&base, id, piece),
+                                &files,
+                                policy,
+                            )));
+                        } else {
+                            sequences.extend(Single::each(vec![Step::delivery(
+                                mattermost.bot_post(&base, id, &[], piece, policy),
+                            )]));
+                        }
+                    }
+                }
+                sequences
+            }
+        };
+        let Some(team) = team.filter(|_| !names.is_empty()) else {
+            // Only channel ids: nothing to look up.
+            let mut plan = Plan::requests(Vec::new());
+            for sequence in deliveries(&HashMap::new()) {
+                plan = plan.then(sequence);
+            }
+            return plan;
+        };
+        let token = self.token.clone();
         Plan::requests(Vec::new()).then(Lookups::new(
             names,
             move |name| {
                 let url = format!(
-                    "{lookup_base}/api/v4/teams/name/{}/channels/name/{}",
+                    "{base}/api/v4/teams/name/{}/channels/name/{}",
                     grammar::quote(&team),
                     grammar::quote(name)
                 );
@@ -275,24 +333,7 @@ impl Mattermost {
                 Step::setup(request)
             },
             read_channel_id,
-            move |found| {
-                // Every piece goes to every channel, in the order they were given.
-                let mut steps = Vec::new();
-                for piece in &pieces {
-                    for target in &mattermost.targets {
-                        let id = match target {
-                            Target::Id(id) => Some(id),
-                            Target::Name(name) => found.get(name),
-                        };
-                        if let Some(id) = id {
-                            steps.push(Step::delivery(
-                                mattermost.bot_post(&base, id, piece, policy),
-                            ));
-                        }
-                    }
-                }
-                steps
-            },
+            deliveries,
         ))
     }
 
@@ -325,4 +366,111 @@ fn read_channel_id(response: &Response) -> Option<String> {
     let answer: Value = serde_json::from_slice(response.body.expose()).ok()?;
     let id = answer.get("id")?.as_str()?;
     (!id.trim().is_empty()).then(|| id.to_owned())
+}
+
+/// The id of an uploaded file in the answer to the upload.
+fn read_file_id(response: &Response) -> Option<String> {
+    let answer: Value = serde_json::from_slice(response.body.expose()).ok()?;
+    let id = answer.get("file_infos")?.get(0)?.get("id")?.as_str()?;
+    (!id.is_empty()).then(|| id.to_owned())
+}
+
+/// The post to one channel of a message with files: upload every file to the
+/// channel, then post the message that names them. A file that does not upload
+/// leaves the channel without a post.
+struct ChannelPost {
+    mattermost: Mattermost,
+    base: String,
+    id: String,
+    piece: String,
+    policy: RequestPolicy,
+    /// The uploads still to send.
+    uploads: VecDeque<Step>,
+    /// The ids the server gave the files that are uploaded.
+    file_ids: Vec<String>,
+    posted: bool,
+}
+
+impl ChannelPost {
+    /// `post` is the server's address, the channel id and the text.
+    fn new(
+        mattermost: &Mattermost,
+        post: (&str, &str, &str),
+        files: &[Attachment],
+        policy: RequestPolicy,
+    ) -> Self {
+        let (base, id, piece) = post;
+        let uploads = files
+            .iter()
+            .enumerate()
+            .map(|(index, file)| {
+                let name = file.name_or_default(index + 1);
+                let (content_type, body) = Multipart::new()
+                    .field("channel_id", id)
+                    .file("files", &name, Some(file.mime_type()), file.data())
+                    .finish();
+                let mut request = PreparedRequest::with_body(
+                    Method::Post,
+                    format!("{base}/api/v4/files"),
+                    Some(&content_type),
+                    body,
+                )
+                .with_policy(policy);
+                request.headers.insert(
+                    "Authorization".to_owned(),
+                    SecretString::new(format!("Bearer {}", mattermost.token.expose())),
+                );
+                Step::setup(request)
+            })
+            .collect();
+        Self {
+            mattermost: mattermost.clone(),
+            base: base.to_owned(),
+            id: id.to_owned(),
+            piece: piece.to_owned(),
+            policy,
+            uploads,
+            file_ids: Vec::new(),
+            posted: false,
+        }
+    }
+
+    /// The next upload, or the post once every file is up.
+    fn next(&mut self) -> Next {
+        if let Some(upload) = self.uploads.pop_front() {
+            return Next::go(upload);
+        }
+        self.posted = true;
+        Next::go(Step::delivery(self.mattermost.bot_post(
+            &self.base,
+            &self.id,
+            &self.file_ids,
+            &self.piece,
+            self.policy,
+        )))
+    }
+}
+
+impl Sequence for ChannelPost {
+    fn start(&mut self) -> Step {
+        self.uploads
+            .pop_front()
+            .expect("uploads are planned only when there is a file to upload")
+    }
+
+    fn answer(&mut self, result: Result<&Response, &TransportError>) -> Next {
+        if self.posted {
+            return Next::done();
+        }
+        match result.map(read_file_id) {
+            Ok(Some(id)) => {
+                self.file_ids.push(id);
+                self.next()
+            }
+            // The server did not say which file it stored: no post.
+            Ok(None) => Next::fail(TransportError::InvalidResponse),
+            // A failed upload is already a failure of the plan: no post.
+            Err(_) => Next::done(),
+        }
+    }
 }

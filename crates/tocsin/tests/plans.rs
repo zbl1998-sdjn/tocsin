@@ -387,6 +387,158 @@ mod mattermost {
         assert!(report.is_success());
         assert_eq!(transport.calls(), ["POST /hooks/FAKE_hook"]);
     }
+
+    /// The server of the lookups, and of the uploads, which get the id `F-` and
+    /// the name of the file.
+    #[allow(clippy::unnecessary_wraps, reason = "the shape a transport answers in")]
+    fn server(request: &PreparedRequest) -> Result<Response, TransportError> {
+        if request.url.expose().ends_with("/api/v4/files") {
+            let body = request.body.text();
+            let name = body
+                .split("filename=\"")
+                .nth(1)
+                .and_then(|rest| rest.split('"').next())
+                .unwrap_or("");
+            let answer = json!({"file_infos": [{"id": format!("F-{name}")}]});
+            return Ok(Response::with_body(201, answer.to_string()));
+        }
+        lookup_answer(request)
+    }
+
+    fn files() -> Notification {
+        Notification::new("Body")
+            .attach(tocsin::Attachment::new("a.txt", b"one".to_vec()))
+            .attach(tocsin::Attachment::new("b.png", b"two".to_vec()))
+    }
+
+    #[test]
+    fn a_bot_uploads_files_to_the_channel_and_names_them_in_the_post() {
+        let mut transport = Scripted::new(server);
+        let url = "mmost://localhost/FAKE_bot?mode=bot&to=%2Bid1";
+        let report = notifier(url).send(&files(), &mut transport);
+        assert!(report.is_success());
+        assert_eq!(report.receipts().len(), 1, "the uploads are not receipts");
+        assert_eq!(
+            transport.calls(),
+            [
+                "POST /api/v4/files",
+                "POST /api/v4/files",
+                "POST /api/v4/posts"
+            ]
+        );
+        let first = &transport.seen[0];
+        assert!(
+            first.headers["Content-Type"]
+                .expose()
+                .starts_with("multipart/form-data; boundary=")
+        );
+        assert_eq!(first.headers["Authorization"].expose(), "Bearer FAKE_bot");
+        let body = first.body.text();
+        assert!(
+            body.contains("name=\"channel_id\"\r\n\r\nid1\r\n"),
+            "{body}"
+        );
+        assert!(
+            body.contains(
+                "name=\"files\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\none\r\n"
+            ),
+            "{body}"
+        );
+        assert_eq!(
+            json_body(&transport.seen[2]),
+            json!({"channel_id": "id1", "message": "Body", "file_ids": ["F-a.txt", "F-b.png"]})
+        );
+    }
+
+    #[test]
+    fn every_channel_gets_its_own_uploads() {
+        let mut transport = Scripted::new(server);
+        let url = "mmost://team@localhost/FAKE_bot?mode=bot&to=%23ops,%2Bid1";
+        let report = notifier(url).send(&files(), &mut transport);
+        assert!(report.is_success());
+        // The name is looked up, then each channel gets uploads and a post.
+        assert_eq!(transport.calls().len(), 1 + 2 * 3);
+        let channels: Vec<_> = transport
+            .seen
+            .iter()
+            .filter(|r| r.url.expose().ends_with("/api/v4/files"))
+            .map(|r| {
+                let body = r.body.text();
+                body.contains("name=\"channel_id\"\r\n\r\nid1\r\n")
+            })
+            .collect();
+        // Channels are sorted: the name `ops` first, then `id1`.
+        assert_eq!(channels, [false, false, true, true]);
+    }
+
+    #[test]
+    fn a_failed_upload_leaves_that_channel_without_a_post() {
+        let mut transport = Scripted::new(|request: &PreparedRequest| {
+            let for_id1 = request
+                .body
+                .text()
+                .contains("name=\"channel_id\"\r\n\r\nid1");
+            if request.url.expose().ends_with("/api/v4/files") && for_id1 {
+                Err(TransportError::HttpStatus(413))
+            } else {
+                server(request)
+            }
+        });
+        let url = "mmost://localhost/FAKE_bot?mode=bot&to=%2Bid1,%2Bid2";
+        let report = notifier(url).send(&files(), &mut transport);
+        // id1: the first upload fails, nothing else is sent for it.
+        // id2: both uploads and the post.
+        assert_eq!(transport.calls().len(), 1 + 3);
+        assert_eq!(report.receipts().len(), 2);
+        assert_eq!(
+            report
+                .failures()
+                .map(|r| r.outcome.clone())
+                .collect::<Vec<_>>(),
+            [Outcome::Failed(TransportError::HttpStatus(413))]
+        );
+    }
+
+    #[test]
+    fn an_upload_without_a_file_id_is_a_failure() {
+        let mut transport = Scripted::new(|request: &PreparedRequest| {
+            if request.url.expose().ends_with("/api/v4/files") {
+                Ok(Response::with_body(201, r#"{"file_infos":[]}"#))
+            } else {
+                server(request)
+            }
+        });
+        let url = "mmost://localhost/FAKE_bot?mode=bot&to=%2Bid1";
+        let report = notifier(url).send(&files(), &mut transport);
+        assert_eq!(transport.calls(), ["POST /api/v4/files"]);
+        assert_eq!(
+            report
+                .failures()
+                .map(|r| r.outcome.clone())
+                .collect::<Vec<_>>(),
+            [Outcome::Failed(TransportError::InvalidResponse)]
+        );
+    }
+
+    #[test]
+    fn the_files_go_with_the_first_part_of_a_long_message() {
+        let mut transport = Scripted::new(server);
+        let url = "mmost://localhost/FAKE_bot?mode=bot&to=%2Bid1&overflow=split";
+        let notification = Notification::new("word ".repeat(1000))
+            .attach(tocsin::Attachment::new("a.txt", b"one".to_vec()));
+        let report = notifier(url).send(&notification, &mut transport);
+        assert!(report.is_success());
+        assert_eq!(
+            transport.calls(),
+            [
+                "POST /api/v4/files",
+                "POST /api/v4/posts",
+                "POST /api/v4/posts"
+            ]
+        );
+        assert!(json_body(&transport.seen[1]).get("file_ids").is_some());
+        assert!(json_body(&transport.seen[2]).get("file_ids").is_none());
+    }
 }
 
 #[cfg(feature = "slack")]

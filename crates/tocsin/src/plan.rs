@@ -103,6 +103,9 @@ pub(crate) struct Next {
     failure: Option<TransportError>,
     /// The request to go on with, or `None` to end the sequence.
     step: Option<Step>,
+    /// Sequences to run next, when this one ends. They go before whatever else
+    /// the plan still has to do.
+    spawn: Vec<Box<dyn Sequence>>,
 }
 
 #[allow(
@@ -115,6 +118,7 @@ impl Next {
         Self {
             failure: None,
             step: Some(step),
+            spawn: Vec::new(),
         }
     }
 
@@ -123,24 +127,61 @@ impl Next {
         Self {
             failure: None,
             step: None,
+            spawn: Vec::new(),
+        }
+    }
+
+    /// Nothing more to send here, but these sequences are next. For work that
+    /// can only be planned once the answers are in.
+    pub(crate) fn then(spawn: Vec<Box<dyn Sequence>>) -> Self {
+        Self {
+            failure: None,
+            step: None,
+            spawn,
         }
     }
 
     /// The answer cannot be used: report the failure and stop.
     pub(crate) fn fail(error: TransportError) -> Self {
-        Self {
-            failure: Some(error),
-            step: None,
-        }
+        Self::done().with_failure(error)
     }
 
-    /// The answer cannot be used, but the others can still be: report the
-    /// failure and go on with `step`, or stop when there is none.
-    pub(crate) fn skip(error: TransportError, step: Option<Step>) -> Self {
-        Self {
-            failure: Some(error),
-            step,
-        }
+    /// Report a failure as well, whatever else this does. For an answer that
+    /// cannot be used while the others still can.
+    pub(crate) fn with_failure(mut self, error: TransportError) -> Self {
+        self.failure = Some(error);
+        self
+    }
+}
+
+/// A sequence of one request, for a delivery that needs no answer.
+#[allow(
+    dead_code,
+    reason = "a build with only some services leaves this unused"
+)]
+pub(crate) struct Single(Option<Step>);
+
+#[allow(
+    dead_code,
+    reason = "a build with only some services leaves this unused"
+)]
+impl Single {
+    /// One sequence for each step.
+    pub(crate) fn each(steps: Vec<Step>) -> Vec<Box<dyn Sequence>> {
+        steps
+            .into_iter()
+            .map(|step| Box::new(Self(Some(step))) as Box<dyn Sequence>)
+            .collect()
+    }
+}
+
+impl Sequence for Single {
+    fn start(&mut self) -> Step {
+        self.0.take().expect("a single step is handed out once")
+    }
+
+    fn answer(&mut self, _: Result<&Response, &TransportError>) -> Next {
+        Next::done()
     }
 }
 
@@ -155,15 +196,25 @@ pub(crate) trait Sequence: Send {
     fn answer(&mut self, result: Result<&Response, &TransportError>) -> Next;
 }
 
+impl Sequence for Box<dyn Sequence> {
+    fn start(&mut self) -> Step {
+        (**self).start()
+    }
+
+    fn answer(&mut self, result: Result<&Response, &TransportError>) -> Next {
+        (**self).answer(result)
+    }
+}
+
 /// What a name that was looked up stands for, by name.
 #[cfg(feature = "_lookups")]
 type Found = HashMap<String, String>;
 
 /// Builds the deliveries that need the answers to the lookups.
 #[cfg(feature = "_lookups")]
-type Deliveries = Box<dyn FnOnce(&Found) -> Vec<Step> + Send>;
+type Deliveries = Box<dyn FnOnce(&Found) -> Vec<Box<dyn Sequence>> + Send>;
 
-/// Looks names up, one request each, and then sends the deliveries that are
+/// Looks names up, one request each, and then runs the deliveries that are
 /// built from what was found. A name that cannot be resolved is a failure of its
 /// own, and the deliveries that need no lookup still go out.
 #[cfg(feature = "_lookups")]
@@ -177,7 +228,6 @@ pub(crate) struct Lookups {
     read: fn(&Response) -> Option<String>,
     /// Builds the deliveries once every name was looked up.
     deliveries: Option<Deliveries>,
-    queue: VecDeque<Step>,
 }
 
 #[cfg(feature = "_lookups")]
@@ -187,7 +237,7 @@ impl Lookups {
         names: Vec<String>,
         request: impl Fn(&str) -> Step + Send + 'static,
         read: fn(&Response) -> Option<String>,
-        deliveries: impl FnOnce(&Found) -> Vec<Step> + Send + 'static,
+        deliveries: impl FnOnce(&Found) -> Vec<Box<dyn Sequence>> + Send + 'static,
     ) -> Self {
         Self {
             pending: names.into(),
@@ -196,39 +246,38 @@ impl Lookups {
             request: Box::new(request),
             read,
             deliveries: Some(Box::new(deliveries)),
-            queue: VecDeque::new(),
         }
     }
 
-    /// The next lookup, or the next delivery once every name was looked up.
-    fn advance(&mut self) -> Option<Step> {
+    /// The next lookup, or the deliveries once every name was looked up.
+    fn next(&mut self) -> Next {
         if let Some(name) = self.pending.pop_front() {
             let step = (self.request)(&name);
             self.asked = Some(name);
-            return Some(step);
+            return Next::go(step);
         }
-        if let Some(build) = self.deliveries.take() {
-            self.queue = build(&self.found).into();
+        match self.deliveries.take() {
+            Some(build) => Next::then(build(&self.found)),
+            None => Next::done(),
         }
-        self.queue.pop_front()
-    }
-
-    fn next(&mut self) -> Next {
-        self.advance().map_or_else(Next::done, Next::go)
     }
 }
 
 #[cfg(feature = "_lookups")]
 impl Sequence for Lookups {
     fn start(&mut self) -> Step {
-        self.advance()
-            .expect("a lookup is planned only when there is a name to look up")
+        let name = self
+            .pending
+            .pop_front()
+            .expect("a lookup is planned only when there is a name to look up");
+        let step = (self.request)(&name);
+        self.asked = Some(name);
+        step
     }
 
     fn answer(&mut self, result: Result<&Response, &TransportError>) -> Next {
         let Some(name) = self.asked.take() else {
-            // The answer to a delivery.
-            return self.next();
+            return Next::done();
         };
         match result.map(self.read) {
             Ok(Some(found)) => {
@@ -236,7 +285,7 @@ impl Sequence for Lookups {
                 self.next()
             }
             // The answer says nothing usable: a failure the plan cannot see.
-            Ok(None) => Next::skip(TransportError::InvalidResponse, self.advance()),
+            Ok(None) => self.next().with_failure(TransportError::InvalidResponse),
             // A failed request is already a failure of the plan.
             Err(_) => self.next(),
         }
@@ -375,13 +424,21 @@ impl Plan {
             (_, Err(error)) => self.outcomes.push(Outcome::Failed(error)),
             (Role::Delivery, Ok(response)) => self.outcomes.push(Outcome::Delivered(response)),
         }
-        if let Some(Next { failure, step }) = next {
+        if let Some(Next {
+            failure,
+            step,
+            spawn,
+        }) = next
+        {
             if let Some(error) = failure {
                 self.outcomes.push(Outcome::Failed(error));
             }
             match step {
                 Some(step) => self.queued = Some(step),
                 None => self.current = None,
+            }
+            for sequence in spawn.into_iter().rev() {
+                self.jobs.push_front(Job::Sequence(sequence));
             }
         }
     }

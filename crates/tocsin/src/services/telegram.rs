@@ -23,7 +23,7 @@ use crate::{
     SecretString, TransportError, grammar, message,
     multipart::Multipart,
     options::{FormatMode, Options},
-    plan::{Lookups, Step},
+    plan::{Lookups, Single, Step},
 };
 
 /// `tgram://[bot]<id>:<secret>/...` is rewritten to the generic grammar by
@@ -468,11 +468,13 @@ impl Telegram {
                     chat: Chat::Id(id),
                     topic: detected.topic,
                 }];
-                detected
-                    .prepare(&options, &notification)
-                    .into_iter()
-                    .map(Step::delivery)
-                    .collect()
+                Single::each(
+                    detected
+                        .prepare(&options, &notification)
+                        .into_iter()
+                        .map(Step::delivery)
+                        .collect(),
+                )
             },
         ))
     }

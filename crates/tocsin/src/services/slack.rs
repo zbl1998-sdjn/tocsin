@@ -22,7 +22,7 @@ use crate::{
     Format, Kind, Method, Notification, ParseError, Plan, PreparedRequest, Response, SecretString,
     TransportError, grammar, message,
     options::{FormatMode, Options},
-    plan::{Check, Lookups, Step},
+    plan::{Check, Lookups, Single, Step},
 };
 
 static TOKEN_A: LazyLock<Regex> =
@@ -538,15 +538,18 @@ impl Slack {
             },
             read_user_id,
             move |found| {
-                by_mail
-                    .into_iter()
-                    .filter_map(|(address, mut payload)| {
-                        payload["channel"] = json!(found.get(&address)?);
-                        let mut request = PreparedRequest::json(&url, &payload).with_policy(policy);
-                        request.headers.insert("Authorization".to_owned(), bearer());
-                        Some(Step::delivery(request).checked(Some(api_said_ok)))
-                    })
-                    .collect()
+                Single::each(
+                    by_mail
+                        .into_iter()
+                        .filter_map(|(address, mut payload)| {
+                            payload["channel"] = json!(found.get(&address)?);
+                            let mut request =
+                                PreparedRequest::json(&url, &payload).with_policy(policy);
+                            request.headers.insert("Authorization".to_owned(), bearer());
+                            Some(Step::delivery(request).checked(Some(api_said_ok)))
+                        })
+                        .collect(),
+                )
             },
         ))
     }
