@@ -69,6 +69,44 @@ the command line are visible to other users of the machine; put URLs that hold
 tokens in `TOCSIN_URLS`. A dry run reads no answers, so the requests that depend
 on one (a login, a lookup, an upload) are not shown.
 
+## From a coding agent
+
+A coding agent that runs for minutes is a good reason to want a message on your
+phone. Put your URLs in `TOCSIN_URLS` (for example `ntfy://my-topic`) in the
+environment the agent starts in, and call `tocsin` from its hooks.
+
+Claude Code runs a command on `Stop` (it finished) and `Notification` (it needs
+you) when `~/.claude/settings.json` has
+([hooks reference](https://code.claude.com/docs/en/hooks)):
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "bash",
+          "args": ["-c", "tocsin -t 'Claude Code' -b 'Finished' || true"] }] }
+    ],
+    "Notification": [
+      { "hooks": [{ "type": "command", "command": "bash",
+          "args": ["-c", "jq -r .message | tocsin -t 'Claude Code needs you' || true"] }] }
+    ]
+  }
+}
+```
+
+The `|| true` matters: in a Claude Code hook an exit status of 2, which `tocsin`
+returns for a URL it cannot read, blocks the action instead of just failing. The
+second hook reads the message from the JSON that Claude Code writes to standard
+input, which needs `jq`.
+
+Codex CLI starts the program named by `notify` in `~/.codex/config.toml` with
+the turn as one JSON argument added at the end, which `tocsin` would take for a
+URL, so give it a shell that drops the argument:
+
+```toml
+notify = ["sh", "-c", "tocsin -t Codex -b 'Turn complete' || true", "codex-notify"]
+```
+
 ## Library
 
 ```rust
