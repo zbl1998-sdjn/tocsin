@@ -2,7 +2,7 @@
 
 use std::{fmt, str::FromStr};
 
-use crate::{Notification, ParseError, PreparedRequest, options::Options};
+use crate::{Notification, ParseError, Plan, PreparedRequest, options::Options};
 
 /// The concrete services. Empty when no service feature is enabled.
 #[derive(Clone)]
@@ -156,10 +156,13 @@ impl Service {
         &self.options
     }
 
-    /// Build the HTTP requests that deliver `notification`.
+    /// Build the HTTP requests that deliver `notification` and that can be sent
+    /// without reading an answer first.
     ///
     /// The list is empty when the URL is valid but there is nothing to send to,
-    /// for example a Telegram URL without a chat id.
+    /// for example a Telegram URL without a chat id. It is also empty when the
+    /// delivery needs an answer to come back first, such as a login. Use
+    /// [`plan`](Self::plan) for those.
     #[must_use]
     #[cfg_attr(
         not(feature = "_services"),
@@ -192,6 +195,13 @@ impl Service {
             #[cfg(feature = "slack")]
             Inner::Slack(ref service) => service.prepare(&self.options, notification),
         }
+    }
+
+    /// Everything it takes to deliver `notification`, including the requests
+    /// that depend on the answer to an earlier one. See [`Plan`].
+    #[must_use]
+    pub fn plan(&self, notification: &Notification) -> Plan {
+        Plan::requests(self.prepare(notification))
     }
 
     /// Every normalized field of the parsed URL, secrets included. This exists

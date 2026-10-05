@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, fmt};
 
-use crate::SecretString;
+use crate::{SecretBytes, SecretString};
 
 /// An HTTP method.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,7 +88,7 @@ pub struct PreparedRequest {
     /// Request headers.
     pub headers: BTreeMap<String, SecretString>,
     /// The request body.
-    pub body: SecretString,
+    pub body: SecretBytes,
     /// How to perform the request.
     pub policy: RequestPolicy,
 }
@@ -104,12 +104,12 @@ impl PreparedRequest {
         )
     }
 
-    /// A request with a text body and, optionally, its content type.
+    /// A request with a body and, optionally, its content type.
     pub(crate) fn with_body(
         method: Method,
         url: impl Into<String>,
         content_type: Option<&str>,
-        body: String,
+        body: impl Into<Vec<u8>>,
     ) -> Self {
         Self {
             method,
@@ -118,7 +118,7 @@ impl PreparedRequest {
                 .map(|value| ("Content-Type".to_owned(), SecretString::new(value)))
                 .into_iter()
                 .collect(),
-            body: SecretString::new(body),
+            body: SecretBytes::new(body),
             policy: RequestPolicy::default(),
         }
     }
@@ -162,7 +162,7 @@ impl fmt::Display for PreparedRequest {
 /// timeouts, redirects and certificate checks belong to the client you send it
 /// with, so set them there.
 #[cfg(feature = "http")]
-impl TryFrom<&PreparedRequest> for http::Request<String> {
+impl TryFrom<&PreparedRequest> for http::Request<Vec<u8>> {
     type Error = crate::TransportError;
 
     fn try_from(request: &PreparedRequest) -> Result<Self, Self::Error> {
@@ -173,7 +173,7 @@ impl TryFrom<&PreparedRequest> for http::Request<String> {
             builder = builder.header(name, value.expose());
         }
         builder
-            .body(request.body.expose().to_owned())
+            .body(request.body.expose().to_vec())
             .map_err(|_| crate::TransportError::InvalidRequest)
     }
 }
@@ -208,7 +208,7 @@ mod tests {
         assert_eq!(converted.method(), http::Method::PUT);
         assert_eq!(converted.uri(), "https://example.com/hook?token=FAKE_token");
         assert_eq!(converted.headers()["x-key"], "FAKE_header");
-        assert_eq!(converted.body(), r#"{"a":1}"#);
+        assert_eq!(converted.body().as_slice(), br#"{"a":1}"#);
 
         request.url = SecretString::new("not a url");
         assert_eq!(

@@ -80,16 +80,20 @@ fn success_and_http_failure_are_typed_and_leak_nothing() {
         let received = worker.join().expect("worker");
         assert!(received.starts_with("POST /?token=FAKE_query_secret HTTP/1.1\r\n"));
         assert!(received.contains("FAKE_body_secret"));
+        // The server echoes secrets in its answer; the answer is kept for plans
+        // that need it, but formatting it must not show it.
+        let output = format!("{result:?}");
+        assert!(!output.contains("FAKE_query_secret") && !output.contains("FAKE_body_secret"));
         if status == 200 {
-            assert_eq!(result.expect("success").status, 200);
+            let response = result.expect("success");
+            assert_eq!(response.status, 200);
+            assert_eq!(response.body.text(), "FAKE_query_secret FAKE_body_secret");
         } else {
             assert_eq!(
                 result.expect_err("HTTP failure"),
                 TransportError::HttpStatus(400)
             );
         }
-        let output = format!("{result:?}");
-        assert!(!output.contains("FAKE_query_secret") && !output.contains("FAKE_body_secret"));
     }
 }
 

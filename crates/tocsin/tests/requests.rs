@@ -25,7 +25,7 @@ fn notification(body: &str) -> Notification {
 #[cfg(feature = "_services")]
 #[allow(dead_code, reason = "the form and Pushover tests read bodies as text")]
 fn body(request: &PreparedRequest) -> Value {
-    serde_json::from_str(request.body.expose()).expect("JSON body")
+    serde_json::from_str(&request.body.text()).expect("JSON body")
 }
 
 #[test]
@@ -441,7 +441,7 @@ fn form_webhook_body_renames_and_get_query() {
     );
     assert_eq!(requests[0].headers["X-Key"].expose(), "FAKE_header");
     assert_eq!(
-        requests[0].body.expose(),
+        requests[0].body.text(),
         "headline=Title&message=Body&type=info&extra=a+b"
     );
 
@@ -455,7 +455,7 @@ fn form_webhook_body_renames_and_get_query() {
         requests[0].url.expose(),
         "http://localhost/api?version=1.0&title=Title&message=Body&type=info&b=2"
     );
-    assert_eq!(requests[0].body.expose(), "");
+    assert_eq!(requests[0].body.text(), "");
     assert!(!requests[0].headers.contains_key("Content-Type"));
     assert!(!format!("{service:?} {requests:?}").contains("FAKE_header"));
 }
@@ -584,14 +584,14 @@ fn pushover_devices_groups_priority_and_encryption() {
         "application/x-www-form-urlencoded"
     );
     assert_eq!(
-        requests[0].body.expose(),
+        requests[0].body.text(),
         format!(
             "token={token}&priority=2&title=Title&message=Body&sound=siren\
              &url=https%3A%2F%2Fx%2Fy&url_title=Open+it&retry=900&expire=3600\
              &user={user}&device=phone%2Ctablet"
         )
     );
-    assert!(requests[1].body.expose().ends_with("&user=ops"));
+    assert!(requests[1].body.text().ends_with("&user=ops"));
 
     // With no target the device is left out, which is how Pushover says "all".
     let service: Service = format!("pover://{user}@{token}?format=html")
@@ -599,7 +599,7 @@ fn pushover_devices_groups_priority_and_encryption() {
         .expect("parse");
     let requests = service.prepare(&Notification::new("Body"));
     assert_eq!(
-        requests[0].body.expose(),
+        requests[0].body.text(),
         format!("token={token}&priority=0&message=Body&sound=pushover&html=1&user={user}")
     );
 

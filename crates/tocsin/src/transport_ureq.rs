@@ -2,6 +2,9 @@
 
 use std::time::Duration;
 
+/// The most of a response body that is kept.
+const MAX_RESPONSE_BYTES: u64 = 1 << 20;
+
 use ureq::http::Request;
 
 use crate::{Method, PreparedRequest, Response, Transport, TransportError};
@@ -54,16 +57,22 @@ impl Transport for UreqTransport {
             builder = builder.header(name, value.expose());
         }
         let http_request = builder
-            .body(request.body.expose().to_owned())
+            .body(request.body.expose().to_vec())
             .map_err(|_| TransportError::InvalidRequest)?;
-        let response = agent
+        let mut response = agent
             .run(http_request)
             .map_err(|_| TransportError::Connection)?;
         let status = response.status().as_u16();
         if status >= 400 {
-            Err(TransportError::HttpStatus(status))
-        } else {
-            Ok(Response::new(status))
+            return Err(TransportError::HttpStatus(status));
         }
+        // A body that cannot be read is not a failed delivery.
+        let body = response
+            .body_mut()
+            .with_config()
+            .limit(MAX_RESPONSE_BYTES)
+            .read_to_vec()
+            .unwrap_or_default();
+        Ok(Response::with_body(status, body))
     }
 }

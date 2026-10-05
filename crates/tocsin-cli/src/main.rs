@@ -148,7 +148,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         notifier.send(&notification, &mut UreqTransport)
     };
     for receipt in report.failures() {
-        let reason = match receipt.outcome {
+        let reason = match &receipt.outcome {
             Outcome::Failed(error) => error.to_string(),
             _ => "nothing to send (the URL has no target)".to_owned(),
         };

@@ -1,6 +1,8 @@
 //! Sending one notification to many services.
 
-use crate::{Notification, ParseError, Response, Service, Transport, TransportError};
+use crate::{
+    AsyncTransport, Notification, ParseError, Plan, Response, Service, Transport, TransportError,
+};
 
 /// A set of services that all receive the same notification.
 #[derive(Clone, Debug, Default)]
@@ -39,34 +41,51 @@ impl Notifier {
 
     /// Send `notification` to every service with `transport`.
     ///
-    /// Every request is attempted even when an earlier one failed. Nothing is
-    /// retried.
+    /// Every service is attempted even when an earlier one failed, one after
+    /// the other. Nothing is retried.
     pub fn send<T: Transport>(&self, notification: &Notification, transport: &mut T) -> Report {
         let mut receipts = Vec::new();
         for service in &self.services {
-            let requests = service.prepare(notification);
-            if requests.is_empty() {
-                receipts.push(Receipt {
-                    service: service.name(),
-                    outcome: Outcome::NothingToSend,
-                });
+            let mut plan = service.plan(notification);
+            while let Some(request) = plan.next_request() {
+                plan.report(transport.send(&request));
             }
-            for request in &requests {
-                receipts.push(Receipt {
-                    service: service.name(),
-                    outcome: match transport.send(request) {
-                        Ok(response) => Outcome::Delivered(response),
-                        Err(error) => Outcome::Failed(error),
-                    },
-                });
+            receipts.extend(receipts_of(service, plan));
+        }
+        Report { receipts }
+    }
+
+    /// [`send`](Self::send) with a transport that does not block.
+    ///
+    /// The services are still taken one after the other. To send to several at
+    /// once, give each service its own [`Notifier`] and join the futures.
+    pub async fn send_async<T: AsyncTransport>(
+        &self,
+        notification: &Notification,
+        transport: &mut T,
+    ) -> Report {
+        let mut receipts = Vec::new();
+        for service in &self.services {
+            let mut plan = service.plan(notification);
+            while let Some(request) = plan.next_request() {
+                plan.report(transport.send(&request).await);
             }
+            receipts.extend(receipts_of(service, plan));
         }
         Report { receipts }
     }
 }
 
+fn receipts_of(service: &Service, plan: Plan) -> impl Iterator<Item = Receipt> {
+    let name = service.name();
+    plan.finish().into_iter().map(move |outcome| Receipt {
+        service: name,
+        outcome,
+    })
+}
+
 /// How one request ended.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Outcome {
     /// The service accepted the request.
@@ -79,7 +98,7 @@ pub enum Outcome {
 }
 
 /// The result for one request of one service.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Receipt {
     /// The service name, such as `"telegram"`.
