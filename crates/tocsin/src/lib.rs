@@ -3,7 +3,7 @@
 //! tocsin reads the notification URLs of [Apprise](https://github.com/caronc/apprise)
 //! (`tgram://...`, `slack://...`, `ntfy://...`) and turns them into HTTP
 //! requests. Its URL parser is checked against Apprise itself: the test suite
-//! compares every field of more than 600 URLs with what Apprise parses.
+//! compares every field of more than 700 URLs with what Apprise parses.
 //!
 //! # Send a notification
 //!
@@ -113,7 +113,7 @@
 //!
 //! | Feature | Default | Enables |
 //! |---|---|---|
-//! | `telegram`, `discord`, `ntfy`, `gotify`, `json`, `form`, `workflows`, `mattermost`, `rocketchat`, `pushover`, `slack` | yes (via `all-services`) | that service |
+//! | `telegram`, `discord`, `ntfy`, `gotify`, `json`, `form`, `xml`, `workflows`, `mattermost`, `rocketchat`, `pushover`, `slack`, `prowl`, `ifttt`, `pushbullet`, `zulip`, `pagerduty`, `gchat`, `bark`, `signal`, `homeassistant` | yes (via `all-services`) | that service |
 //! | `ureq` | yes | [`UreqTransport`], a blocking HTTP transport |
 //! | `http` | no | `TryFrom<&PreparedRequest>` for `http::Request<Vec<u8>>` |
 //! | `compat` | no | test-only access to parsed fields |

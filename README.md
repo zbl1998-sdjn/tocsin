@@ -7,10 +7,11 @@ requests. A tocsin is an alarm bell.
 
 **Status: version 0.2.** The library is on [crates.io](https://crates.io/crates/tocsin)
 (`cargo add tocsin`) and its documentation is on [docs.rs](https://docs.rs/tocsin).
-Eighteen services work today: Telegram, Discord, ntfy, Gotify, Slack, Mattermost,
+Twenty-one services work today: Telegram, Discord, ntfy, Gotify, Slack, Mattermost,
 Rocket.Chat, Pushover, Pushbullet, Prowl, IFTTT, Zulip, PagerDuty, Google Chat,
-Microsoft Teams (workflows), and a JSON, an XML and a form webhook. Apprise has
-over a hundred, so check the list below before you depend on this.
+Bark, Signal (through signal-cli-rest-api), Home Assistant, Microsoft Teams
+(workflows), and a JSON, an XML and a form webhook. Apprise has over a hundred,
+so check the list below before you depend on this.
 
 How far it has been checked against real servers (2026-10-05): the tests use a
 local server and compare the URLs with Apprise. An opt-in test
@@ -18,17 +19,19 @@ local server and compare the URLs with Apprise. An opt-in test
 transports, and reads a message and a file back unchanged, and to `httpbin.org`,
 which parses the JSON, form, multipart and XML bodies with its own HTTP stack.
 Requests with deliberately fake credentials reached the real Telegram, Discord,
-Slack, Pushover, Pushbullet, Prowl, IFTTT, PagerDuty, Google Chat and Zulip
-endpoints, which answered with credential errors only. A delivery with real
-credentials has been verified for ntfy.sh and for nothing else, so a service
-that needs an account may still have a difference that only that account shows.
+Slack, Pushover, Pushbullet, Prowl, IFTTT, PagerDuty, Google Chat, Zulip and Bark
+(api.day.app) endpoints, which answered with credential errors only. Signal and
+Home Assistant run on your own server, so they have only met the local test
+server. A delivery with real credentials has been verified for ntfy.sh and for
+nothing else, so a service that needs an account may still have a difference
+that only that account shows.
 
 ## Why it exists
 
 If you already have Apprise URLs in a config file, a Docker label or a Python
 tool, you can use the same strings from a Rust program or a single static
 binary. The URL parser is checked against Apprise itself: the tests compare
-every field of more than 600 URLs with what Apprise parses, so
+every field of more than 700 URLs with what Apprise parses, so
 `ntfys://user:pass@host/topic` means the same thing in both.
 
 Four more things it tries to do well:
@@ -130,6 +133,9 @@ into an `http::Request`.
 | `zulip://<bot>@<organization>/<token>[/<stream or e-mail>...]` | Zulip | `token`, `to` | |
 | `pagerduty://<integration key>@<api key>[/<source>[/<component>]]` | PagerDuty | `region`, `severity`, `group`, `class`, `click`, `+detail=value`, `apikey`, `integrationkey`, `source`, `component` | `image` |
 | `gchat://<workspace>/<key>/<token>[/<thread>]`, the `chat.googleapis.com` webhook address | Google Chat | `workspace`, `key`, `token`, `thread` (`threadKey`) | |
+| `bark://[user:pass@]host[:port]/<device key>...`, `barks://` | Bark | `sound`, `level`, `badge`, `volume`, `call`, `group`, `category`, `click`, `icon`, `to`, `format=markdown`, `overflow` | `image`; `key`: a URL that asks for encryption sends nothing |
+| `signal://[user:pass@]host[:port]/<from number>[/<number or @group>...]`, `signals://` | Signal (signal-cli-rest-api) | `from`, `to`, `batch`, `status`, `format=markdown` (sent as styled text), `overflow`, files | |
+| `hassio://host[:port]/<token>[/<service>...]`, `hassios://` | Home Assistant | `token` (`accesstoken`), `to`, `prefix`, `nid`, `batch`, `overflow` | the user and password of the URL |
 | `workflows://host/<workflow id>/<signature>`, the Power Automate and Logic Apps addresses | Microsoft Teams | `pa`, `route`, `ver`, `wrap`, `id`, `sig` | `image`, `:token`, `template` (refused) |
 | `json://host[:port][/path]`, `jsons://` | JSON webhook | `method`, `+header`, `-param`, `:body field`, user and password, files | |
 | `xml://host[:port][/path]`, `xmls://` | XML webhook | `method`, `+header`, `-param`, `:element`, user and password, files | |

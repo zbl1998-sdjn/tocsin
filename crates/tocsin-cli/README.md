@@ -25,9 +25,10 @@ that depend on one (a login, a lookup, an upload) are not shown.
 URLs given on the command line are visible to other users of the machine; put
 URLs that hold tokens in `TOCSIN_URLS`.
 
-Eighteen services are supported: Telegram, Discord, ntfy, Gotify, Slack,
+Twenty-one services are supported: Telegram, Discord, ntfy, Gotify, Slack,
 Mattermost, Rocket.Chat, Pushover, Pushbullet, Prowl, IFTTT, Zulip, PagerDuty,
-Google Chat, Microsoft Teams (workflows), and a JSON, an XML and a form webhook.
+Google Chat, Bark, Signal, Home Assistant, Microsoft Teams (workflows), and a
+JSON, an XML and a form webhook.
 See the [repository](https://github.com/zbl1998-sdjn/tocsin) for
 the options each one applies and how tocsin differs from Apprise.
 

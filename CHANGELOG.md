@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- Bark (`bark://`, `barks://`), Signal through signal-cli-rest-api (`signal://`,
+  `signals://`) and Home Assistant (`hassio://`, `hassios://`), each with at
+  least 40 fixtures that agree with Apprise. Their differences are in
+  `DESIGN.md`: a Bark URL with `key=` sends nothing, because tocsin does not
+  encrypt; Home Assistant gets the token as a bearer token and ignores the
+  user and password of the URL.
+- `tests/live.rs` in `tocsin` and `tocsin-reqwest`: opt-in tests
+  (`cargo test --test live -- --ignored`) that send over TLS to `httpbin.org`
+  and `ntfy.sh` with both transports and read what arrived.
+
 ## [0.2.0] - 2026-10-05
 
 This release adds attachments, an async transport, seven more services, and the

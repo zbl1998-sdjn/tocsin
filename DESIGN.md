@@ -145,7 +145,21 @@ A different kind of difference is not a rejection: the `+key` and `-key` of an
 IFTTT URL never reach Apprise's plugin (`parse_url` returns them as `add_token`
 and `del_token`, and `__init__` reads `add_tokens` and `del_tokens`), so at the
 pinned commit they do nothing. tocsin applies them as documented, and the oracle
-leaves those two fields out of what it compares.
+leaves those two fields out of what it compares. The same goes for the `volume`
+of a Bark URL: Apprise warns that a volume outside 0 to 10 is not valid but
+keeps it, because it assigns before it checks. tocsin drops it, and the oracle
+reports `None` for such a volume.
+
+Two services need a regular expression that ends in a look-ahead, which the
+`regex` crate does not have: the phone numbers of Signal and the
+`service:identity,identity` entries of Home Assistant. Both are matched by hand,
+and each was checked once against Apprise's own parsing with several thousand
+random texts, besides the fixtures. Apprise's results are reproduced where they
+look like mistakes. In a Signal `to=` value, the numbers after one that is
+followed by something that is not a number are lost. In a Home Assistant path, a
+list of three identities ends after two, and the third becomes a service of its
+own. A URL with such a list does what it does in Apprise; if you want the other
+behavior, write one entry per path element.
 
 ## Secrets
 
@@ -274,6 +288,26 @@ By service:
   pushed after the note to each target; nothing is sent when an upload fails.
 - Zulip, PagerDuty, Google Chat: as Apprise, with the markdown and image
   differences above.
+- Bark: a message without a title goes out without one, where Apprise sends its
+  own name, and the Apprise image is not sent as the icon (an `icon=` is). A URL
+  with `key=` asks for AES-GCM encryption, which tocsin does not do; it sends
+  nothing, like Pushover with `key=`. A volume outside 0 to 10 is dropped (see
+  above). `badge` and `volume` are read like Python's `int()`, except that a
+  number too large for 64 bits is dropped.
+- Signal: the title goes in front of the body, as in Apprise. Markdown is sent
+  with `text_mode` set to `styled` and is not translated to Signal's own markup,
+  which Apprise does. A file goes with the first part of a long message only.
+- Home Assistant: the token is sent as a bearer token and the user and password
+  of the URL are ignored. Apprise passes them to its HTTP library as well, which
+  then sends basic authentication in place of the token, and Home Assistant does
+  not accept that. `prefix=` is put on every address; Apprise leaves it off the
+  address of a persistent notification. That notification has an id only when
+  `nid=` gives one (Apprise sends a random one), and Home Assistant makes its
+  own. A message without a title has no `title` field instead of an empty one.
+  The identities of a service go in `target`, the field that Home Assistant's
+  notify services read; Apprise sends `targets`, which the schema in Home
+  Assistant's `notify/const.py` does not allow (read on 2026-10-05, not tried
+  against a running server).
 
 ## Feature hygiene
 

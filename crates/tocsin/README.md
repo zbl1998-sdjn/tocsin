@@ -5,10 +5,10 @@ notification URLs of [Apprise](https://github.com/caronc/apprise) (`tgram://...`
 `slack://...`, `ntfy://...`) and turns them into HTTP requests.
 
 Telegram, Discord, ntfy, Gotify, Slack, Mattermost, Rocket.Chat, Pushover,
-Pushbullet, Prowl, IFTTT, Zulip, PagerDuty, Google Chat, Microsoft Teams
-(workflows) and a JSON, an XML and a form webhook are supported today. The URL
-parser is checked against Apprise itself: the tests compare every field of more
-than 600 URLs with what Apprise parses.
+Pushbullet, Prowl, IFTTT, Zulip, PagerDuty, Google Chat, Bark, Signal, Home
+Assistant, Microsoft Teams (workflows) and a JSON, an XML and a form webhook are
+supported today. The URL parser is checked against Apprise itself: the tests
+compare every field of more than 700 URLs with what Apprise parses.
 
 ```rust
 use tocsin::{Notification, Notifier, UreqTransport};
