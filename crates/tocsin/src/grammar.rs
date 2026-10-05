@@ -660,6 +660,32 @@ fn split_host_port(hostport: &str) -> (&str, Option<i64>, bool) {
     }
 }
 
+/// Apprise's check for an e-mail address, which also reads `Name <address>` and
+/// `label+address`. It only looks at the start of the text, like Python's
+/// `re.match`.
+#[cfg(feature = "_email")]
+mod email {
+    use std::sync::LazyLock;
+
+    use regex::Regex;
+
+    /// The group `full` is the address itself.
+    static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+        r#"(?i)^(?:(?:[\s"']{0,32})?(?P<name>[^:<'"]{0,128})?[:<\s'"]{1,32})?(?P<full>(?:(?P<label>[^+\s]{1,128})\+)?(?P<email>(?P<userid>[a-z0-9_!#$%&*/=?%`{|}~^-]+(?:\.[a-z0-9_!#$%&'*/=?%`{|}~^-]+)*)@(?P<domain>(?:(?:[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9_-]*[a-z0-9]))|[a-z0-9][a-z0-9_-]{5,})))\s*>?"#,
+        )
+        .expect("static regex")
+    });
+
+    /// The address in `target`, if it is an e-mail address.
+    pub(crate) fn email_of(target: &str) -> Option<String> {
+        EMAIL.captures(target).map(|found| found["full"].to_owned())
+    }
+}
+
+#[cfg(feature = "_email")]
+pub(crate) use email::email_of;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -668,6 +694,24 @@ mod tests {
     #[cfg(feature = "_list")]
     fn list_sorts_and_deduplicates() {
         assert_eq!(list("b, a;[a] c"), ["a", "b", "c"]);
+    }
+
+    #[test]
+    #[cfg(feature = "_email")]
+    fn an_email_address_is_found_the_way_apprise_finds_it() {
+        for (target, address) in [
+            ("bob@example.com", Some("bob@example.com")),
+            ("label+bob@example.com", Some("label+bob@example.com")),
+            ("Bob <bob@example.com>", Some("bob@example.com")),
+            ("user@localhost", Some("user@localhost")),
+            ("#general", None),
+            ("@bob", None),
+            ("general", None),
+            ("+C123", None),
+            ("bob@x", None),
+        ] {
+            assert_eq!(email_of(target).as_deref(), address, "target: {target}");
+        }
     }
 
     #[test]

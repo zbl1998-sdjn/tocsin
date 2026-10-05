@@ -83,7 +83,8 @@ def normalize(obj):
                     "NotifyPushover": "pushover",
                     "NotifySlack": "slack",
                     "NotifyProwl": "prowl",
-                    "NotifyIFTTT": "ifttt"}[type(obj).__name__],
+                    "NotifyIFTTT": "ifttt",
+                    "NotifyPushBullet": "pushbullet"}[type(obj).__name__],
         "host": obj.host, "port": obj.port, "user": obj.user,
         "password": obj.password, "secure": obj.secure,
         "format": list(obj.notify_format) if isinstance(obj.notify_format, tuple)
@@ -145,6 +146,8 @@ def normalize(obj):
         # del_tokens. tocsin applies them as documented, so they are not
         # compared.
         base.update(webhook_id=obj.webhook_id, events=obj.events)
+    elif base["service"] == "pushbullet":
+        base.update(accesstoken=obj.accesstoken, targets=list(obj.targets))
     elif base["service"] == "mattermost":
         base.update(mode=obj.mode, token=obj.token, path=obj.fullpath,
                     targets=[list(t) for t in obj.targets],

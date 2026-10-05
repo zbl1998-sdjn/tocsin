@@ -48,16 +48,6 @@ static CHANNEL: LazyLock<Regex> = LazyLock::new(|| {
         .expect("static regex")
 });
 
-/// Apprise's check for an e-mail address, which also reads `Name <address>` and
-/// `label+address`. It only looks at the start of the text, like Python's
-/// `re.match`. The group `full` is the address that is looked up.
-static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r#"(?i)^(?:(?:[\s"']{0,32})?(?P<name>[^:<'"]{0,128})?[:<\s'"]{1,32})?(?P<full>(?:(?P<label>[^+\s]{1,128})\+)?(?P<email>(?P<userid>[a-z0-9_!#$%&*/=?%`{|}~^-]+(?:\.[a-z0-9_!#$%&'*/=?%`{|}~^-]+)*)@(?P<domain>(?:(?:[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9_-]*[a-z0-9]))|[a-z0-9][a-z0-9_-]{5,})))\s*>?"#,
-    )
-    .expect("static regex")
-});
-
 /// The ways Slack can be reached, in the order Apprise tries a prefix against.
 const MODES: [Mode; 5] = [
     Mode::Hook,
@@ -93,11 +83,6 @@ impl Mode {
             .into_iter()
             .find(|mode| mode.as_str().starts_with(prefix))
     }
-}
-
-/// The address to look up, if `target` is an e-mail address.
-fn email_of(target: &str) -> Option<String> {
-    EMAIL.captures(target).map(|found| found["full"].to_owned())
 }
 
 /// A webhook answers `ok` when it took the message.
@@ -559,7 +544,7 @@ impl Slack {
             .enumerate()
         {
             for channel in self.channels.iter().flatten() {
-                if let Some(address) = email_of(channel) {
+                if let Some(address) = grammar::email_of(channel) {
                     if self.mode == Mode::Bot {
                         let payload = self.payload(options, notification, &title, &body);
                         by_mail.push((address, payload, part == 0));
@@ -650,7 +635,7 @@ impl Slack {
         // The deliveries are built for the addresses that were found, so the
         // list has to be taken before they are.
         for channel in self.channels.iter().flatten() {
-            if let Some(address) = email_of(channel) {
+            if let Some(address) = grammar::email_of(channel) {
                 if !addresses.contains(&address) {
                     addresses.push(address);
                 }
@@ -699,28 +684,6 @@ impl Slack {
             ("tokens", json!(self.tokens)),
         ] {
             map.insert(key.to_owned(), value);
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::email_of;
-
-    #[test]
-    fn an_email_address_is_found_the_way_apprise_finds_it() {
-        for (target, address) in [
-            ("bob@example.com", Some("bob@example.com")),
-            ("label+bob@example.com", Some("label+bob@example.com")),
-            ("Bob <bob@example.com>", Some("bob@example.com")),
-            ("user@localhost", Some("user@localhost")),
-            ("#general", None),
-            ("@bob", None),
-            ("general", None),
-            ("+C123", None),
-            ("bob@x", None),
-        ] {
-            assert_eq!(email_of(target).as_deref(), address, "target: {target}");
         }
     }
 }

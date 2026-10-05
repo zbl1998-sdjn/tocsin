@@ -33,6 +33,8 @@ enum Inner {
     Prowl(crate::services::prowl::Prowl),
     #[cfg(feature = "ifttt")]
     Ifttt(crate::services::ifttt::Ifttt),
+    #[cfg(feature = "pushbullet")]
+    Pushbullet(crate::services::pushbullet::Pushbullet),
 }
 
 /// One notification destination, parsed from an Apprise-compatible URL such as
@@ -122,6 +124,9 @@ impl Service {
             #[cfg(feature = "ifttt")]
             "ifttt" => crate::services::ifttt::parse(input)
                 .map(|(options, service)| Self::new(options, Inner::Ifttt(service))),
+            #[cfg(feature = "pushbullet")]
+            "pbul" => crate::services::pushbullet::parse(input)
+                .map(|(options, service)| Self::new(options, Inner::Pushbullet(service))),
             _ => Err(ParseError::UnsupportedService),
         }
     }
@@ -161,6 +166,8 @@ impl Service {
             Inner::Prowl(_) => "prowl",
             #[cfg(feature = "ifttt")]
             Inner::Ifttt(_) => "ifttt",
+            #[cfg(feature = "pushbullet")]
+            Inner::Pushbullet(_) => "pushbullet",
         }
     }
 
@@ -212,6 +219,8 @@ impl Service {
             Inner::Prowl(ref service) => service.prepare(&self.options, notification),
             #[cfg(feature = "ifttt")]
             Inner::Ifttt(ref service) => service.prepare(&self.options, notification),
+            #[cfg(feature = "pushbullet")]
+            Inner::Pushbullet(ref service) => service.prepare(&self.options, notification),
         }
     }
 
@@ -228,6 +237,8 @@ impl Service {
             Inner::Telegram(ref service) => service.plan(&self.options, notification),
             #[cfg(feature = "pushover")]
             Inner::Pushover(ref service) => service.plan(&self.options, notification),
+            #[cfg(feature = "pushbullet")]
+            Inner::Pushbullet(ref service) => service.plan(&self.options, notification),
             #[cfg(feature = "mattermost")]
             Inner::Mattermost(ref service) => service.plan(&self.options, notification),
             #[cfg(feature = "slack")]
@@ -279,6 +290,8 @@ impl Service {
             Inner::Prowl(ref service) => service.compat(&mut map),
             #[cfg(feature = "ifttt")]
             Inner::Ifttt(ref service) => service.compat(&mut map),
+            #[cfg(feature = "pushbullet")]
+            Inner::Pushbullet(ref service) => service.compat(&mut map),
         }
         serde_json::Value::Object(map)
     }

@@ -21,6 +21,8 @@ pub(crate) mod mattermost;
 pub(crate) mod ntfy;
 #[cfg(feature = "prowl")]
 pub(crate) mod prowl;
+#[cfg(feature = "pushbullet")]
+pub(crate) mod pushbullet;
 #[cfg(feature = "pushover")]
 pub(crate) mod pushover;
 #[cfg(feature = "rocketchat")]

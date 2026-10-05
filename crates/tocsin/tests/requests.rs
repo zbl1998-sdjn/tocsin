@@ -752,6 +752,43 @@ fn prowl_posts_a_form_to_the_public_api() {
     assert!(body.ends_with("&priority=0"), "{body}");
 }
 
+#[cfg(feature = "pushbullet")]
+#[test]
+fn pushbullet_pushes_a_note_to_every_target() {
+    let key = "a".repeat(32);
+    let url = format!("pbul://{key}/phone/%23news/user@example.com");
+    let service: Service = url.parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 3);
+    for request in &requests {
+        assert_eq!(request.url.expose(), "https://api.pushbullet.com/v2/pushes");
+        // The token is the user name of a basic authentication.
+        assert_eq!(
+            request.headers["Authorization"].expose(),
+            "Basic YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE6"
+        );
+    }
+    // Targets are sorted: the channel, the device, the address.
+    assert_eq!(
+        body(&requests[0]),
+        json!({"type": "note", "title": "Title", "body": "Body", "channel_tag": "news"})
+    );
+    assert_eq!(body(&requests[1])["device_iden"], json!("phone"));
+    assert_eq!(body(&requests[2])["email"], json!("user@example.com"));
+
+    // With no target the message goes to every device.
+    let service: Service = format!("pbul://{key}").parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(
+        body(&requests[0]),
+        json!({"type": "note", "title": "Title", "body": "Body"})
+    );
+    // Only a URL that names the device ALL_DEVICES means that device.
+    let service: Service = format!("pbul://{key}/ALL_DEVICES").parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(body(&requests[0])["device_iden"], json!("ALL_DEVICES"));
+}
+
 #[cfg(feature = "ifttt")]
 #[test]
 fn ifttt_triggers_every_event_with_the_three_values() {
@@ -810,6 +847,7 @@ fn credentials_in_urls_never_show_up_in_formatting() {
         "slack://FAKE_user@TFAKE/BFAKE/CFAKE/FAKE_password?:key=FAKE_query_token",
         "prowl://FAKE_user:FAKE_password@FAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKE0/FAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKE1",
         "ifttt://FAKE_token@FAKE_event?+key=FAKE_query_token",
+        "pbul://FAKE_token/FAKE_device?to=FAKE_password",
     ] {
         if let Ok(service) = url.parse::<Service>() {
             let requests = service.prepare(&notification("body"));

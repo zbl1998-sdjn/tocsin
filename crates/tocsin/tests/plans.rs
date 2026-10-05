@@ -4,7 +4,8 @@
     feature = "rocketchat",
     feature = "mattermost",
     feature = "slack",
-    feature = "telegram"
+    feature = "telegram",
+    feature = "pushbullet"
 ))]
 
 use serde_json::Value;
@@ -991,5 +992,176 @@ mod slack_files {
             .filter(|call| call.contains("chat.postMessage"))
             .count();
         assert!(messages > 1);
+    }
+}
+
+#[cfg(feature = "pushbullet")]
+mod pushbullet {
+    use serde_json::json;
+    use tocsin::{Attachment, Notification, Outcome, Response, TransportError};
+
+    use super::*;
+
+    const URL: &str = "pbul://FAKE_token/phone/user@example.com";
+
+    /// Pushbullet's side of uploads: the address of each file is its name.
+    #[allow(clippy::unnecessary_wraps, reason = "the shape a transport answers in")]
+    fn pushbullet(request: &PreparedRequest) -> Result<Response, TransportError> {
+        let url = request.url.expose();
+        if url.ends_with("/v2/upload-request") {
+            let asked = json_body(request);
+            let name = asked["file_name"].as_str().unwrap_or("");
+            let answer = json!({
+                "file_name": name,
+                "file_type": asked["file_type"],
+                "file_url": format!("https://dl.pushb.com/abc/{name}"),
+                "upload_url": format!("https://upload.pushbullet.com/{name}"),
+            });
+            return Ok(Response::with_body(200, answer.to_string()));
+        }
+        Ok(Response::with_body(200, "{}"))
+    }
+
+    fn with_files() -> Notification {
+        Notification::new("Body")
+            .title("T")
+            .attach(Attachment::new("cat.png", b"PNG".to_vec()))
+            .attach(Attachment::new("notes.txt", b"hi".to_vec()))
+    }
+
+    fn failures(report: &tocsin::Report) -> Vec<Outcome> {
+        report.failures().map(|r| r.outcome.clone()).collect()
+    }
+
+    #[test]
+    fn files_are_uploaded_first_and_then_pushed_after_the_note_to_every_target() {
+        let mut transport = Scripted::new(pushbullet);
+        let report = notifier(URL).send(&with_files(), &mut transport);
+        assert!(report.is_success(), "{:?}", failures(&report));
+        assert_eq!(
+            transport.calls(),
+            [
+                "POST /v2/upload-request",
+                "POST /cat.png",
+                "POST /v2/upload-request",
+                "POST /notes.txt",
+                // Targets are sorted: the device, then the address.
+                "POST /v2/pushes", // the note to the device
+                "POST /v2/pushes", // cat.png
+                "POST /v2/pushes", // notes.txt
+                "POST /v2/pushes", // the note to the address
+                "POST /v2/pushes",
+                "POST /v2/pushes",
+            ]
+        );
+        // Two notes and four file pushes are deliveries; the uploads are not.
+        assert_eq!(report.receipts().len(), 6);
+
+        assert_eq!(
+            json_body(&transport.seen[0]),
+            json!({"file_name": "cat.png", "file_type": "image/png"})
+        );
+        // The upload carries the file, and no credentials.
+        let upload = &transport.seen[1];
+        assert_eq!(upload.url.expose(), "https://upload.pushbullet.com/cat.png");
+        assert!(!upload.headers.contains_key("Authorization"));
+        assert_eq!(
+            upload.body.text(),
+            "--tocsin-0\r\nContent-Disposition: form-data; name=\"file\"; filename=\"cat.png\"\r\n\r\nPNG\r\n--tocsin-0--\r\n"
+        );
+        assert!(
+            transport.seen[0].headers["Authorization"]
+                .expose()
+                .starts_with("Basic ")
+        );
+
+        assert_eq!(json_body(&transport.seen[4])["type"], json!("note"));
+        // An image is shown inline; another file is not.
+        assert_eq!(
+            json_body(&transport.seen[5]),
+            json!({
+                "type": "file",
+                "file_name": "cat.png",
+                "file_type": "image/png",
+                "file_url": "https://dl.pushb.com/abc/cat.png",
+                "image_url": "https://dl.pushb.com/abc/cat.png",
+            })
+        );
+        assert!(json_body(&transport.seen[6]).get("image_url").is_none());
+        assert_eq!(
+            json_body(&transport.seen[7])["email"],
+            json!("user@example.com")
+        );
+    }
+
+    #[test]
+    fn nothing_is_sent_when_an_upload_fails() {
+        let mut transport = Scripted::new(|request: &PreparedRequest| {
+            if request.url.expose().ends_with("/notes.txt") {
+                Err(TransportError::HttpStatus(500))
+            } else {
+                pushbullet(request)
+            }
+        });
+        let report = notifier(URL).send(&with_files(), &mut transport);
+        assert!(
+            transport
+                .calls()
+                .iter()
+                .all(|call| !call.ends_with("/v2/pushes")),
+            "{:?}",
+            transport.calls()
+        );
+        assert_eq!(
+            failures(&report),
+            [Outcome::Failed(TransportError::HttpStatus(500))]
+        );
+    }
+
+    #[test]
+    fn an_upload_request_without_an_address_is_a_failure() {
+        let mut transport = Scripted::new(|request: &PreparedRequest| {
+            if request.url.expose().ends_with("/v2/upload-request") {
+                Ok(Response::with_body(200, r#"{"file_name":"cat.png"}"#))
+            } else {
+                pushbullet(request)
+            }
+        });
+        let report = notifier(URL).send(&with_files(), &mut transport);
+        assert_eq!(transport.calls(), ["POST /v2/upload-request"]);
+        assert_eq!(
+            failures(&report),
+            [Outcome::Failed(TransportError::InvalidResponse)]
+        );
+    }
+
+    #[test]
+    fn files_alone_send_no_note() {
+        let mut transport = Scripted::new(pushbullet);
+        let notification = Notification::new("").attach(Attachment::new("a.txt", b"x".to_vec()));
+        let report = notifier("pbul://FAKE_token").send(&notification, &mut transport);
+        assert!(report.is_success(), "{:?}", failures(&report));
+        assert_eq!(
+            transport.calls(),
+            ["POST /v2/upload-request", "POST /a.txt", "POST /v2/pushes"]
+        );
+        assert_eq!(json_body(&transport.seen[2])["type"], json!("file"));
+    }
+
+    #[test]
+    fn the_files_go_with_the_first_part_of_a_long_message() {
+        let mut transport = Scripted::new(pushbullet);
+        let notification = Notification::new("word ".repeat(10_000))
+            .attach(Attachment::new("a.txt", b"x".to_vec()));
+        let report =
+            notifier("pbul://FAKE_token?overflow=split").send(&notification, &mut transport);
+        assert!(report.is_success(), "{:?}", failures(&report));
+        let uploads = transport
+            .calls()
+            .iter()
+            .filter(|call| call.ends_with("/v2/upload-request"))
+            .count();
+        assert_eq!(uploads, 1);
+        assert!(transport.calls().len() > 4);
     }
 }
