@@ -42,9 +42,17 @@ Each service has its own struct instead of a bag of key-value pairs. A field
 that does not exist for a service cannot be read by mistake, and the compiler
 tells you when one is unused.
 
-A `prepare` is one step. A service whose protocol needs an answer before the
-next request (Rocket.Chat's login, Mattermost's channel lookup, Slack's e-mail
-lookup) cannot be done that way, and those paths send nothing; see below.
+A `prepare` is one step: it builds the requests that need no answer. A service
+whose protocol needs an answer before the next request (Rocket.Chat's login,
+Mattermost's channel lookup, Slack's e-mail lookup) builds a `Plan` instead,
+through `Service::plan`. A plan hands out one request, takes the result, and
+decides what comes next, without sending anything itself. `Notifier::send`,
+`Notifier::send_async` and an application that drives a plan with its own client
+all use it, so the logic exists once. Inside a sequence every request has a
+role: a delivery (its result is a receipt), a setup such as a login or lookup
+(only a failure is a receipt), or a cleanup such as a logout (never reported).
+A failed delivery does not keep the other deliveries or the logout from going
+out, as in Apprise.
 
 ## URL grammar parity
 
@@ -163,9 +171,10 @@ By service:
   is refused. Slack e-mail targets need a lookup request and are skipped.
 - Mattermost: in bot mode a channel written as a name needs a lookup, so only
   channel ids are used.
-- Rocket.Chat: the `basic` mode (user and password) needs a login whose answer
-  the next request uses, so it sends nothing. Use a webhook or a personal access
-  token.
+- Rocket.Chat: the `basic` mode (user and password) logs in, posts to every
+  target and logs out, once for every piece of a long message, as Apprise does.
+  A login answer without a user id and a token is a failure; Apprise sends the
+  posts without the headers and lets the server refuse them.
 - Pushover: a URL with `key=` asks for end-to-end encryption, which tocsin does
   not do; it sends nothing, where Apprise falls back to plain text when it has no
   crypto library. The `Authorization` header is left out because the token is

@@ -4,6 +4,29 @@ All notable changes are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
+## [Unreleased]
+
+### Changed (breaking)
+
+- `Service::plan` returns a `Plan`, a state machine that hands out the next
+  request and reads the result, for deliveries in which a request depends on the
+  answer to the one before. `Notifier::send` uses it.
+- Request and response bodies are bytes. `PreparedRequest::body` is a
+  `SecretBytes` (redacted in `Debug` and `Display`), and the `http` feature
+  converts to `http::Request<Vec<u8>>`.
+- `Response` carries the start of the response body (`UreqTransport` keeps up to
+  1 MiB), is no longer `Copy`, and is `#[non_exhaustive]`. `Outcome` and
+  `Receipt` are no longer `Copy`.
+- `TransportError::InvalidResponse` is new: a service answered, but not in a way
+  the next request could be built from.
+
+### Added
+
+- `Notifier::send_async` and the `AsyncTransport` trait, for clients that do not
+  block. `MockTransport` implements both transports.
+- Rocket.Chat `basic` mode (user name and password): log in, post to every
+  target, log out.
+
 ## [0.1.0] - 2026-10-05
 
 First public version: the `tocsin` library and the `tocsin-cli` command line,

@@ -45,6 +45,9 @@ pub enum TransportError {
     InvalidRequest,
     /// This transport cannot send the request's HTTP method.
     UnsupportedMethod,
+    /// The service answered, but not in a way the next request could be built
+    /// from, such as a login answer without a token.
+    InvalidResponse,
 }
 
 impl fmt::Display for TransportError {
@@ -55,6 +58,7 @@ impl fmt::Display for TransportError {
             Self::UnsupportedPolicy => f.write_str("unsupported transport policy"),
             Self::InvalidRequest => f.write_str("invalid prepared request"),
             Self::UnsupportedMethod => f.write_str("unsupported HTTP method"),
+            Self::InvalidResponse => f.write_str("unexpected notification service response"),
         }
     }
 }

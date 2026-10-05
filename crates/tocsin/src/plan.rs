@@ -29,19 +29,76 @@ use std::{collections::VecDeque, fmt};
 
 use crate::{Outcome, PreparedRequest, Response, TransportError};
 
+/// What a request in a [`Sequence`] is for, which decides what its result means
+/// for the plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(feature = "_sequence"), allow(dead_code))]
+pub(crate) enum Role {
+    /// Delivers the notification. Its result is an outcome of the plan.
+    Delivery,
+    /// Prepares the deliveries, such as a login or a lookup. Only a failure is
+    /// an outcome.
+    Setup,
+    /// Tidies up afterwards, such as a logout. Its result is not reported.
+    Cleanup,
+}
+
+/// A request of a [`Sequence`] and what it is for.
+#[cfg_attr(not(feature = "_sequence"), allow(dead_code))]
+pub(crate) struct Step {
+    pub(crate) request: PreparedRequest,
+    pub(crate) role: Role,
+}
+
+#[cfg_attr(not(feature = "_sequence"), allow(dead_code))]
+impl Step {
+    pub(crate) fn delivery(request: PreparedRequest) -> Self {
+        Self {
+            request,
+            role: Role::Delivery,
+        }
+    }
+
+    pub(crate) fn setup(request: PreparedRequest) -> Self {
+        Self {
+            request,
+            role: Role::Setup,
+        }
+    }
+
+    pub(crate) fn cleanup(request: PreparedRequest) -> Self {
+        Self {
+            request,
+            role: Role::Cleanup,
+        }
+    }
+}
+
+/// What a [`Sequence`] does after an answer.
+#[cfg_attr(not(feature = "_sequence"), allow(dead_code))]
+pub(crate) enum Next {
+    /// Go on with this request.
+    Go(Step),
+    /// Nothing more to send.
+    Done,
+    /// The answer cannot be used: report the failure and stop.
+    Fail(TransportError),
+}
+
 /// Requests in which each one may depend on the answer to the one before.
 pub(crate) trait Sequence: Send {
     /// The request that starts the sequence.
-    fn start(&mut self) -> PreparedRequest;
+    fn start(&mut self) -> Step;
 
-    /// Read the answer to the last request. `Ok(Some(request))` goes on with
-    /// that request, `Ok(None)` ends the sequence successfully, and an error
-    /// ends it as a failure.
-    fn answer(&mut self, response: &Response) -> Result<Option<PreparedRequest>, TransportError>;
+    /// Read what became of the last request and decide what is next. Failures
+    /// are shown too, so that one failed delivery does not keep the others
+    /// from going out or the logout from being sent.
+    fn answer(&mut self, result: Result<&Response, &TransportError>) -> Next;
 }
 
 enum Job {
     Request(PreparedRequest),
+    #[cfg_attr(not(feature = "_sequence"), allow(dead_code))]
     Sequence(Box<dyn Sequence>),
 }
 
@@ -51,27 +108,27 @@ enum Job {
 /// with any client, and give the result to [`report`](Self::report). Repeat
 /// until there is no next request, then read the outcomes with
 /// [`finish`](Self::finish). A failed request does not stop the plan: the
-/// sequence it belonged to ends, and the next independent request still goes
-/// out.
+/// requests that do not depend on it still go out.
 pub struct Plan {
     jobs: VecDeque<Job>,
     /// The sequence that the request last handed out belongs to.
     current: Option<Box<dyn Sequence>>,
     /// The next step of `current`, once its last answer has been read.
-    queued: Option<PreparedRequest>,
+    queued: Option<Step>,
+    /// What the request that was handed out last is for.
+    role: Role,
     /// Whether a request was handed out and its result is still due.
     awaiting: bool,
-    had_jobs: bool,
     outcomes: Vec<Outcome>,
 }
 
 impl Plan {
     fn new(jobs: VecDeque<Job>) -> Self {
         Self {
-            had_jobs: !jobs.is_empty(),
             jobs,
             current: None,
             queued: None,
+            role: Role::Delivery,
             awaiting: false,
             outcomes: Vec::new(),
         }
@@ -84,9 +141,9 @@ impl Plan {
 
     /// Add a sequence after what is already planned.
     #[must_use]
+    #[cfg_attr(not(feature = "_sequence"), allow(dead_code))]
     pub(crate) fn then(mut self, sequence: impl Sequence + 'static) -> Self {
         self.jobs.push_back(Job::Sequence(Box::new(sequence)));
-        self.had_jobs = true;
         self
     }
 
@@ -98,22 +155,20 @@ impl Plan {
         if self.awaiting {
             self.report(Err(TransportError::Connection));
         }
-        if let Some(request) = self.queued.take() {
-            self.awaiting = true;
-            return Some(request);
-        }
-        match self.jobs.pop_front()? {
-            Job::Request(request) => {
-                self.awaiting = true;
-                Some(request)
-            }
-            Job::Sequence(mut sequence) => {
-                let first = sequence.start();
-                self.current = Some(sequence);
-                self.awaiting = true;
-                Some(first)
-            }
-        }
+        let step = match self.queued.take() {
+            Some(step) => step,
+            None => match self.jobs.pop_front()? {
+                Job::Request(request) => Step::delivery(request),
+                Job::Sequence(mut sequence) => {
+                    let first = sequence.start();
+                    self.current = Some(sequence);
+                    first
+                }
+            },
+        };
+        self.role = step.role;
+        self.awaiting = true;
+        Some(step.request)
     }
 
     /// Say how the request that [`next_request`](Self::next_request) handed
@@ -123,32 +178,36 @@ impl Plan {
             return;
         }
         self.awaiting = false;
-        let sequence = self.current.take();
-        match (result, sequence) {
-            (Ok(response), None) => self.outcomes.push(Outcome::Delivered(response)),
-            (Ok(response), Some(mut sequence)) => match sequence.answer(&response) {
-                Ok(Some(next)) => {
-                    self.current = Some(sequence);
-                    self.queued = Some(next);
-                }
-                Ok(None) => self.outcomes.push(Outcome::Delivered(response)),
-                Err(error) => self.outcomes.push(Outcome::Failed(error)),
-            },
-            (Err(error), _) => self.outcomes.push(Outcome::Failed(error)),
+        let next = self
+            .current
+            .as_mut()
+            .map(|sequence| sequence.answer(result.as_ref()));
+        match (self.role, result) {
+            (Role::Cleanup, _) | (Role::Setup, Ok(_)) => {}
+            (_, Err(error)) => self.outcomes.push(Outcome::Failed(error)),
+            (Role::Delivery, Ok(response)) => self.outcomes.push(Outcome::Delivered(response)),
+        }
+        match next {
+            Some(Next::Go(step)) => self.queued = Some(step),
+            Some(Next::Fail(error)) => {
+                self.outcomes.push(Outcome::Failed(error));
+                self.current = None;
+            }
+            Some(Next::Done) | None => self.current = None,
         }
     }
 
-    /// What happened to each delivery. A plan that had nothing to send says
-    /// [`Outcome::NothingToSend`].
+    /// What happened to each delivery. A plan that delivered nothing and
+    /// failed at nothing says [`Outcome::NothingToSend`].
     #[must_use]
     pub fn finish(mut self) -> Vec<Outcome> {
         if self.awaiting {
             self.report(Err(TransportError::Connection));
         }
-        if self.had_jobs {
-            self.outcomes
-        } else {
+        if self.outcomes.is_empty() {
             vec![Outcome::NothingToSend]
+        } else {
+            self.outcomes
         }
     }
 }
@@ -169,39 +228,78 @@ mod tests {
         PreparedRequest::json(url, &serde_json::json!({}))
     }
 
-    /// Asks for `first`, then, if the answer says so, for `second`.
-    struct Login {
-        answers: Vec<u16>,
+    /// Hands out its steps one after the other, whatever the answers are, and
+    /// remembers whether each answer was a success. With `fail_after`, it
+    /// gives up on the answer with that number.
+    struct Script {
+        steps: VecDeque<Step>,
+        answers: Vec<bool>,
+        fail_after: Option<usize>,
     }
 
-    impl Sequence for Login {
-        fn start(&mut self) -> PreparedRequest {
-            request("https://example.com/login")
-        }
-
-        fn answer(
-            &mut self,
-            response: &Response,
-        ) -> Result<Option<PreparedRequest>, TransportError> {
-            self.answers.push(response.status);
-            match self.answers.len() {
-                1 => Ok(Some(request("https://example.com/post"))),
-                2 => Ok(None),
-                _ => Err(TransportError::InvalidRequest),
+    impl Script {
+        fn new(steps: Vec<Step>) -> Self {
+            Self {
+                steps: steps.into(),
+                answers: Vec::new(),
+                fail_after: None,
             }
         }
     }
 
-    fn drive(mut plan: Plan, results: &mut Vec<Result<Response, TransportError>>) -> Vec<String> {
+    impl Sequence for Script {
+        fn start(&mut self) -> Step {
+            self.steps.pop_front().expect("a first step")
+        }
+
+        fn answer(&mut self, result: Result<&Response, &TransportError>) -> Next {
+            self.answers.push(result.is_ok());
+            if self.fail_after == Some(self.answers.len()) {
+                return Next::Fail(TransportError::InvalidResponse);
+            }
+            // A failed login or lookup leaves nothing to go on with.
+            if result.is_err() && self.answers.len() == 1 {
+                return Next::Done;
+            }
+            self.steps.pop_front().map_or(Next::Done, Next::Go)
+        }
+    }
+
+    fn session() -> Vec<Step> {
+        vec![
+            Step::setup(request("https://example.com/login")),
+            Step::delivery(request("https://example.com/post-1")),
+            Step::delivery(request("https://example.com/post-2")),
+            Step::cleanup(request("https://example.com/logout")),
+        ]
+    }
+
+    /// Sends everything the plan asks for, answering from `results`, and
+    /// returns the URLs and the outcomes.
+    fn drive(
+        mut plan: Plan,
+        results: Vec<Result<Response, TransportError>>,
+    ) -> (Vec<String>, Vec<Outcome>) {
+        let mut results = VecDeque::from(results);
         let mut sent = Vec::new();
         while let Some(request) = plan.next_request() {
             sent.push(request.url.expose().to_owned());
-            plan.report(results.remove(0));
+            plan.report(
+                results
+                    .pop_front()
+                    .unwrap_or_else(|| Ok(Response::new(200))),
+            );
         }
-        results.clear();
-        let outcomes = plan.finish();
-        sent.push(format!("{} outcomes", outcomes.len()));
-        sent
+        (sent, plan.finish())
+    }
+
+    #[allow(clippy::unnecessary_wraps, reason = "stands for a delivered request")]
+    fn ok() -> Result<Response, TransportError> {
+        Ok(Response::new(200))
+    }
+
+    fn rejected() -> Result<Response, TransportError> {
+        Err(TransportError::HttpStatus(500))
     }
 
     #[test]
@@ -216,46 +314,96 @@ mod tests {
             request("https://a.example"),
             request("https://b.example"),
         ]);
-        let mut results = vec![Ok(Response::new(200)), Err(TransportError::HttpStatus(500))];
+        let (sent, outcomes) = drive(plan, vec![ok(), rejected()]);
+        assert_eq!(sent, ["https://a.example", "https://b.example"]);
         assert_eq!(
-            drive(plan, &mut results),
-            ["https://a.example", "https://b.example", "2 outcomes"]
-        );
-    }
-
-    #[test]
-    fn a_sequence_goes_on_with_the_answers() {
-        let plan = Plan::requests(Vec::new()).then(Login {
-            answers: Vec::new(),
-        });
-        let mut results = vec![Ok(Response::new(200)), Ok(Response::new(201))];
-        assert_eq!(
-            drive(plan, &mut results),
+            outcomes,
             [
-                "https://example.com/login",
-                "https://example.com/post",
-                "1 outcomes"
+                Outcome::Delivered(Response::new(200)),
+                Outcome::Failed(TransportError::HttpStatus(500)),
             ]
         );
     }
 
     #[test]
-    fn a_failed_step_ends_its_sequence_but_not_the_plan() {
-        let plan = Plan::requests(vec![request("https://after.example")]).then(Login {
-            answers: Vec::new(),
-        });
-        // The plan runs the independent request first, then the sequence, whose
-        // first step fails, so its second step is never sent.
-        let mut results = vec![Ok(Response::new(200)), Err(TransportError::HttpStatus(401))];
-        let sent = drive(plan, &mut results);
+    fn only_deliveries_of_a_sequence_are_outcomes() {
+        let plan = Plan::requests(Vec::new()).then(Script::new(session()));
+        let (sent, outcomes) = drive(plan, Vec::new());
         assert_eq!(
             sent,
             [
-                "https://after.example",
                 "https://example.com/login",
-                "2 outcomes"
+                "https://example.com/post-1",
+                "https://example.com/post-2",
+                "https://example.com/logout",
             ]
         );
+        assert_eq!(outcomes.len(), 2);
+        assert!(
+            outcomes
+                .iter()
+                .all(|outcome| matches!(outcome, Outcome::Delivered(_)))
+        );
+    }
+
+    #[test]
+    fn a_failed_delivery_does_not_keep_the_others_or_the_cleanup_from_going_out() {
+        let plan = Plan::requests(Vec::new()).then(Script::new(session()));
+        let (sent, outcomes) = drive(plan, vec![ok(), rejected(), ok(), ok()]);
+        assert_eq!(sent.len(), 4);
+        assert_eq!(
+            outcomes,
+            [
+                Outcome::Failed(TransportError::HttpStatus(500)),
+                Outcome::Delivered(Response::new(200)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_setup_ends_its_sequence_but_not_the_plan() {
+        let plan =
+            Plan::requests(vec![request("https://after.example")]).then(Script::new(session()));
+        let (sent, outcomes) = drive(plan, vec![ok(), rejected()]);
+        assert_eq!(sent, ["https://after.example", "https://example.com/login"]);
+        assert_eq!(
+            outcomes,
+            [
+                Outcome::Delivered(Response::new(200)),
+                Outcome::Failed(TransportError::HttpStatus(500)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_cleanup_is_not_reported() {
+        let plan = Plan::requests(Vec::new()).then(Script::new(session()));
+        let (_, outcomes) = drive(plan, vec![ok(), ok(), ok(), rejected()]);
+        assert_eq!(outcomes.len(), 2);
+        assert!(
+            outcomes
+                .iter()
+                .all(|outcome| matches!(outcome, Outcome::Delivered(_)))
+        );
+    }
+
+    #[test]
+    fn an_answer_that_cannot_be_used_is_a_failure() {
+        let mut script = Script::new(session());
+        script.fail_after = Some(1);
+        let plan = Plan::requests(Vec::new()).then(script);
+        let (sent, outcomes) = drive(plan, Vec::new());
+        assert_eq!(sent, ["https://example.com/login"]);
+        assert_eq!(outcomes, [Outcome::Failed(TransportError::InvalidResponse)]);
+    }
+
+    #[test]
+    fn a_sequence_that_only_prepared_has_nothing_to_send() {
+        let plan = Plan::requests(Vec::new()).then(Script::new(vec![Step::setup(request(
+            "https://example.com/lookup",
+        ))]));
+        let (_, outcomes) = drive(plan, Vec::new());
+        assert_eq!(outcomes, [Outcome::NothingToSend]);
     }
 
     #[test]

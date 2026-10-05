@@ -200,8 +200,17 @@ impl Service {
     /// Everything it takes to deliver `notification`, including the requests
     /// that depend on the answer to an earlier one. See [`Plan`].
     #[must_use]
+    #[cfg_attr(
+        not(feature = "_services"),
+        allow(unused_variables, reason = "no service exists to read it")
+    )]
     pub fn plan(&self, notification: &Notification) -> Plan {
-        Plan::requests(self.prepare(notification))
+        match self.inner {
+            #[cfg(feature = "rocketchat")]
+            Inner::RocketChat(ref service) => service.plan(&self.options, notification),
+            #[allow(unreachable_patterns, reason = "every service may need a plan")]
+            _ => Plan::requests(self.prepare(notification)),
+        }
     }
 
     /// Every normalized field of the parsed URL, secrets included. This exists

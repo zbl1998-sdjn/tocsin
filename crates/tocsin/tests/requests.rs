@@ -558,7 +558,8 @@ fn rocketchat_webhook_token_and_basic_requests() {
         json!({"text": "# Title\nBody", "roomId": "room1"})
     );
 
-    // A user name and password need a login request first, so nothing is sent.
+    // A user name and password need a login request first, so `prepare` has
+    // nothing to send; `plan` does the login (see `tests/plans.rs`).
     let service: Service = "rocket://user:pass@localhost/room1".parse().expect("parse");
     assert!(service.prepare(&notification("Body")).is_empty());
 }

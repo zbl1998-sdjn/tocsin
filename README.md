@@ -88,7 +88,7 @@ for request in service.prepare(&Notification::new("Disk almost full")) {
 | `gotify://host[:port][/path]/<token>`, `gotifys://` | Gotify | `priority`, `format=markdown`, `overflow` | |
 | `slack://<a>/<b>/<c>/<channel>...`, `slack://xoxb-.../<channel>`, workflow and trigger URLs, the `hooks.slack.com` addresses | Slack | `mode`, `blocks`, `footer`, `to`, `token`, threads (`#channel:ts`), the user part as the bot name | `image`, `timestamp`, `:token`, `template` (refused), e-mail targets (skipped) |
 | `mmost://[team@]host[:port][/path]/<token>`, `mmosts://`, `mattermost.*/hooks/` addresses | Mattermost | `mode` (`webhook`, `bot`), `to`/`channel`, `botname`/`team`, `icon_url` | `image`, bot-mode channel names (skipped) |
-| `rocket://<id>/<token>@host/<target>...`, `rocket://user:<token>@host/...`, `rockets://` | Rocket.Chat | modes `webhook` and `token`, `to`, `webhook` | `avatar`; the `basic` mode sends nothing (it needs a login first) |
+| `rocket://<id>/<token>@host/<target>...`, `rocket://user:<token>@host/...`, `rockets://` | Rocket.Chat | modes `webhook`, `token` and `basic` (logs in, posts, logs out), `to`, `webhook` | `avatar` |
 | `pover://<user key>@<app token>/<device or #group>...` | Pushover | `priority`, `sound`, `url`, `url_title`, `interval`, `expire`, `to`, `format=html` | `key` and `e2ee`: a URL that asks for encryption sends nothing |
 | `workflows://host/<workflow id>/<signature>`, the Power Automate and Logic Apps addresses | Microsoft Teams | `pa`, `route`, `ver`, `wrap`, `id`, `sig` | `image`, `:token`, `template` (refused) |
 | `json://host[:port][/path]`, `jsons://` | JSON webhook | `method`, `+header`, `-param`, `:body field`, user and password | |

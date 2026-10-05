@@ -81,17 +81,10 @@ fn bad_urls_are_rejected_when_added() {
 fn block_on<F: Future>(future: F) -> F::Output {
     use std::{
         pin::pin,
-        sync::Arc,
-        task::{Context, Poll, Wake, Waker},
+        task::{Context, Poll, Waker},
     };
 
-    struct Noop;
-    impl Wake for Noop {
-        fn wake(self: Arc<Self>) {}
-    }
-
-    let waker = Waker::from(Arc::new(Noop));
-    let mut context = Context::from_waker(&waker);
+    let mut context = Context::from_waker(Waker::noop());
     let mut future = pin!(future);
     loop {
         if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
@@ -137,8 +130,11 @@ fn async_sending_keeps_going_after_a_failure() {
 
     struct AsyncFlaky;
     impl AsyncTransport for AsyncFlaky {
-        async fn send(&mut self, request: &PreparedRequest) -> Result<Response, TransportError> {
-            Flaky.send(request)
+        fn send(
+            &mut self,
+            request: &PreparedRequest,
+        ) -> impl Future<Output = Result<Response, TransportError>> + Send {
+            std::future::ready(Flaky.send(request))
         }
     }
 

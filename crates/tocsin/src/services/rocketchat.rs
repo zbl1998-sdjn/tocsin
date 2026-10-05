@@ -3,18 +3,22 @@
 //! token, and `rockets://...` for TLS.
 //!
 //! A webhook is written as two parts, `<id>/<token>`, in the place of the user
-//! name. The third way Apprise supports, a user name and password, needs a
-//! login request whose answer is needed for the next one, which a pure
-//! `prepare` cannot do; such a URL parses but sends nothing.
+//! name. The third way, a user name and password, logs in, posts to every
+//! target and logs out again, once for every piece of a long message, as
+//! Apprise does. The token the login hands back is needed for the next
+//! request, so this only works through [`Service::plan`](crate::Service::plan);
+//! [`Service::prepare`](crate::Service::prepare) returns nothing for it.
 
-use std::{fmt::Write as _, sync::LazyLock};
+use std::{collections::VecDeque, fmt::Write as _, sync::LazyLock};
 
 use regex::Regex;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::{
-    Format, Notification, ParseError, PreparedRequest, SecretString, grammar, message,
+    Format, Method, Notification, ParseError, Plan, PreparedRequest, RequestPolicy, Response,
+    SecretString, TransportError, grammar, message,
     options::{FormatMode, Options},
+    plan::{Next, Sequence, Step},
 };
 
 /// `<webhook>@` in front of the host, with an optional user before it.
@@ -64,6 +68,8 @@ pub(crate) struct RocketChat {
     avatar: bool,
     /// The user id and access token that token mode sends as headers.
     credentials: Option<(String, SecretString)>,
+    /// The user name and password that basic mode logs in with.
+    login: Option<(String, SecretString)>,
 }
 
 /// Split targets into channels (`#name`), rooms (an id) and users (`@name`),
@@ -162,9 +168,14 @@ pub(crate) fn parse(input: &str) -> Result<(Options, RocketChat), ParseError> {
     } else {
         mode != Mode::Basic
     };
-    let credentials = match (mode, user, password) {
-        (Mode::Token, Some(user), Some(password)) => Some((user, SecretString::new(password))),
-        _ => None,
+    let (credentials, login) = match (mode, user, password) {
+        (Mode::Token, Some(user), Some(password)) => {
+            (Some((user, SecretString::new(password))), None)
+        }
+        (Mode::Basic, Some(user), Some(password)) => {
+            (None, Some((user, SecretString::new(password))))
+        }
+        _ => (None, None),
     };
     let rocketchat = RocketChat {
         mode,
@@ -174,39 +185,43 @@ pub(crate) fn parse(input: &str) -> Result<(Options, RocketChat), ParseError> {
         users,
         avatar,
         credentials,
+        login,
     };
     Ok((options, rocketchat))
 }
 
+/// The address of the server's API, without a trailing slash.
+fn api_url(options: &Options) -> String {
+    let mut api = format!(
+        "{}://{}",
+        if options.secure { "https" } else { "http" },
+        options.host
+    );
+    if let Some(port) = options.port {
+        write!(api, ":{port}").expect("writing to a String works");
+    }
+    api
+}
+
 impl RocketChat {
-    pub(crate) fn prepare(
+    /// The pieces of the message and the places to post each of them to: users
+    /// first, then channels, then rooms, as Apprise does. A key is the name of
+    /// the payload field the place goes in.
+    fn pieces_and_places(
         &self,
         options: &Options,
         notification: &Notification,
-    ) -> Vec<PreparedRequest> {
-        // Logging in first and using the answer is not possible here.
-        if self.mode == Mode::Basic {
-            return Vec::new();
-        }
-        let mut api = format!(
-            "{}://{}",
-            if options.secure { "https" } else { "http" },
-            options.host
-        );
-        if let Some(port) = options.port {
-            write!(api, ":{port}").expect("writing to a String works");
-        }
+    ) -> (Vec<String>, Vec<(&'static str, String)>) {
         // Apprise has no separate title here: it goes in front of the body.
         let format = message::format(options, notification);
         let text = message::merged(notification, format);
-        // Users first, then channels, then rooms, as Apprise does.
-        let mut destinations: Vec<(&str, String)> = self
+        let mut destinations: Vec<(&'static str, String)> = self
             .users
             .iter()
             .map(|user| ("channel", format!("@{user}")))
             .chain(self.channels.iter().map(|c| ("channel", format!("#{c}"))))
             .collect();
-        let mut rooms: Vec<(&str, String)> = self
+        let mut rooms: Vec<(&'static str, String)> = self
             .rooms
             .iter()
             .map(|room| {
@@ -221,12 +236,26 @@ impl RocketChat {
             })
             .collect();
         destinations.append(&mut rooms);
+        (message::chunks(&text, 1000, options.overflow), destinations)
+    }
+
+    pub(crate) fn prepare(
+        &self,
+        options: &Options,
+        notification: &Notification,
+    ) -> Vec<PreparedRequest> {
+        // Logging in first and using the answer needs a plan.
+        if self.mode == Mode::Basic {
+            return Vec::new();
+        }
+        let api = api_url(options);
+        let (pieces, destinations) = self.pieces_and_places(options, notification);
         let url = match (&self.webhook, self.mode) {
             (Some(webhook), Mode::Webhook) => format!("{api}/hooks/{}", webhook.expose()),
             _ => format!("{api}/api/v1/chat.postMessage"),
         };
         let mut requests = Vec::new();
-        for piece in message::chunks(&text, 1000, options.overflow) {
+        for piece in pieces {
             let targets: Vec<Option<&(&str, String)>> = if destinations.is_empty() {
                 vec![None]
             } else {
@@ -253,8 +282,35 @@ impl RocketChat {
         requests
     }
 
+    /// [`prepare`](Self::prepare), plus the login and logout that basic mode
+    /// needs around every piece of the message.
+    pub(crate) fn plan(&self, options: &Options, notification: &Notification) -> Plan {
+        let Some((user, password)) = self.login.as_ref().filter(|_| self.mode == Mode::Basic)
+        else {
+            return Plan::requests(self.prepare(options, notification));
+        };
+        let api = api_url(options);
+        let (pieces, destinations) = self.pieces_and_places(options, notification);
+        let mut plan = Plan::requests(Vec::new());
+        for piece in pieces {
+            plan = plan.then(Session {
+                api: api.clone(),
+                user: user.clone(),
+                password: password.clone(),
+                policy: options.policy(),
+                payloads: destinations
+                    .iter()
+                    .map(|(key, place)| json!({"text": piece, *key: place}))
+                    .collect(),
+                stage: Stage::Login,
+                auth: None,
+            });
+        }
+        plan
+    }
+
     #[cfg(feature = "compat")]
-    pub(crate) fn compat(&self, map: &mut serde_json::Map<String, serde_json::Value>) {
+    pub(crate) fn compat(&self, map: &mut serde_json::Map<String, Value>) {
         let headers = self.credentials.as_ref().map_or_else(
             || json!({}),
             |(user, token)| json!({"X-User-Id": user, "X-Auth-Token": token.expose()}),
@@ -272,6 +328,113 @@ impl RocketChat {
             ("headers", headers),
         ] {
             map.insert(key.to_owned(), value);
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Stage {
+    Login,
+    Posting,
+    Logout,
+}
+
+/// One piece of the message in basic mode: log in, post it to every target,
+/// log out. A failed post does not keep the others from going out, and the
+/// logout is sent whatever happened to the posts.
+struct Session {
+    api: String,
+    user: String,
+    password: SecretString,
+    policy: RequestPolicy,
+    /// The JSON payload of each post still to send.
+    payloads: VecDeque<Value>,
+    stage: Stage,
+    /// The user id and token the login answered with.
+    auth: Option<(SecretString, SecretString)>,
+}
+
+impl Session {
+    fn headers(&self, request: &mut PreparedRequest) {
+        if let Some((user_id, token)) = &self.auth {
+            request
+                .headers
+                .insert("X-User-Id".to_owned(), user_id.clone());
+            request
+                .headers
+                .insert("X-Auth-Token".to_owned(), token.clone());
+        }
+    }
+
+    /// The next post, or the logout when there are none left.
+    fn next_post(&mut self) -> Next {
+        if let Some(payload) = self.payloads.pop_front() {
+            self.stage = Stage::Posting;
+            let mut request =
+                PreparedRequest::json(format!("{}/api/v1/chat.postMessage", self.api), &payload)
+                    .with_policy(self.policy);
+            self.headers(&mut request);
+            return Next::Go(Step::delivery(request));
+        }
+        self.stage = Stage::Logout;
+        let mut request = PreparedRequest::with_body(
+            Method::Post,
+            format!("{}/api/v1/logout", self.api),
+            None,
+            Vec::<u8>::new(),
+        )
+        .with_policy(self.policy);
+        self.headers(&mut request);
+        Next::Go(Step::cleanup(request))
+    }
+}
+
+/// The user id and token of a successful login answer.
+fn read_login(response: &Response) -> Option<(SecretString, SecretString)> {
+    let answer: Value = serde_json::from_slice(response.body.expose()).ok()?;
+    if answer.get("status")?.as_str()? != "success" {
+        return None;
+    }
+    let data = answer.get("data")?;
+    Some((
+        SecretString::new(data.get("userId")?.as_str()?),
+        SecretString::new(data.get("authToken")?.as_str()?),
+    ))
+}
+
+impl Sequence for Session {
+    fn start(&mut self) -> Step {
+        let body = format!(
+            "username={}&password={}",
+            grammar::form_encode(&self.user),
+            grammar::form_encode(self.password.expose())
+        );
+        Step::setup(
+            PreparedRequest::with_body(
+                Method::Post,
+                format!("{}/api/v1/login", self.api),
+                Some("application/x-www-form-urlencoded"),
+                body,
+            )
+            .with_policy(self.policy),
+        )
+    }
+
+    fn answer(&mut self, result: Result<&Response, &TransportError>) -> Next {
+        match self.stage {
+            Stage::Login => {
+                // A login that failed has nothing to log out of.
+                let Ok(response) = result else {
+                    return Next::Done;
+                };
+                let Some(auth) = read_login(response) else {
+                    return Next::Fail(TransportError::InvalidResponse);
+                };
+                self.auth = Some(auth);
+                self.next_post()
+            }
+            Stage::Posting => self.next_post(),
+            Stage::Logout => Next::Done,
         }
     }
 }
