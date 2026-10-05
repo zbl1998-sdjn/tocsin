@@ -219,8 +219,106 @@ fn help_lists_the_options() {
     let output = tocsin().arg("--help").output().expect("run");
     assert_eq!(code(&output), 0);
     let help = text(&output.stdout);
-    for flag in ["--body", "--title", "--notification-type", "--dry-run"] {
+    for flag in [
+        "--body",
+        "--title",
+        "--notification-type",
+        "--attach",
+        "--dry-run",
+    ] {
         assert!(help.contains(flag), "{flag} missing from help");
     }
     assert!(help.contains("TOCSIN_URLS"));
+}
+
+/// A file with a name of its own, removed when it goes out of scope.
+struct TempFile(std::path::PathBuf);
+
+impl TempFile {
+    fn new(name: &str, content: &[u8]) -> Self {
+        let path = std::env::temp_dir().join(format!("tocsin-{}-{name}", std::process::id()));
+        std::fs::write(&path, content).expect("write the file");
+        Self(path)
+    }
+}
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[test]
+fn an_attached_file_is_sent_with_the_message() {
+    let (port, worker) = loopback(200);
+    let file = TempFile::new("note.txt", b"hello-attachment");
+    let url = format!("ntfy://127.0.0.1:{port}/alerts");
+    let output = tocsin()
+        .args(["-b", "disk is full", "-a"])
+        .arg(&file.0)
+        .arg(&url)
+        .output()
+        .expect("run");
+    let received = worker.join().expect("worker");
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    let name = file
+        .0
+        .file_name()
+        .expect("name")
+        .to_string_lossy()
+        .into_owned();
+    assert!(
+        received.starts_with(&format!(
+            "POST /alerts?filename={name}&message=disk+is+full HTTP/1.1\r\n"
+        )),
+        "{received}"
+    );
+    assert!(received.ends_with("hello-attachment"), "{received}");
+}
+
+#[test]
+fn a_file_can_be_the_whole_message() {
+    let file = TempFile::new("only.txt", b"x");
+    let output = tocsin()
+        .args(["--dry-run", "-a"])
+        .arg(&file.0)
+        .arg("ntfy://my-topic")
+        .output()
+        .expect("run");
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "POST https://ntfy.sh\n");
+}
+
+#[test]
+fn a_file_that_cannot_be_read_is_a_usage_error() {
+    let output = tocsin()
+        .args([
+            "--dry-run",
+            "-b",
+            "hi",
+            "-a",
+            "no-such-file.bin",
+            "ntfy://my-topic",
+        ])
+        .output()
+        .expect("run");
+    assert_eq!(code(&output), 2);
+    assert!(
+        text(&output.stderr).contains("cannot read no-such-file.bin"),
+        "{}",
+        text(&output.stderr)
+    );
+}
+
+#[test]
+fn a_dry_run_is_not_a_failure_for_services_that_read_answers() {
+    // Slack answers 200 to a message it did not accept, so tocsin reads the
+    // answer; a dry run has none.
+    let output = tocsin()
+        .args(["--dry-run", "-b", "hi", "slack://xoxb-1234-1234-abc124/ops"])
+        .output()
+        .expect("run");
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "POST https://slack.com\n");
+    assert!(text(&output.stderr).contains("dry run"));
 }

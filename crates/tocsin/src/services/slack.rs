@@ -8,21 +8,33 @@
 //! why that only works through [`Service::plan`](crate::Service::plan);
 //! [`Service::prepare`](crate::Service::prepare) skips those targets.
 //!
+//! A bot can send files too, which Slack takes in three steps: ask for an upload
+//! address (`files.getUploadURLExternal`), send the file there, and share it into
+//! every channel the message went to (`files.completeUploadExternal`). The
+//! channels are the ones Slack names in its answers to the messages, so this only
+//! works through [`Service::plan`](crate::Service::plan), and the files go with
+//! the first part of a long message. Unlike Apprise, the bot token is not sent
+//! to the upload address.
+//!
 //! Slack answers `200` to a message it did not accept (`{"ok": false}` from the
 //! Web API) and to a webhook that is wrong in some ways, so a plan reads the
 //! answer too, as Apprise does: a webhook has to answer `ok`, the Web API has to
 //! say `"ok": true`.
 
-use std::{collections::BTreeMap, sync::LazyLock};
+use std::{
+    collections::{BTreeMap, HashMap, VecDeque},
+    sync::LazyLock,
+};
 
 use regex::Regex;
 use serde_json::{Value, json};
 
 use crate::{
-    Format, Kind, Method, Notification, ParseError, Plan, PreparedRequest, Response, SecretString,
-    TransportError, grammar, message,
+    Attachment, Format, Kind, Method, Notification, ParseError, Plan, PreparedRequest,
+    RequestPolicy, Response, SecretString, TransportError, grammar, message,
+    multipart::Multipart,
     options::{FormatMode, Options},
-    plan::{Check, Lookups, Single, Step},
+    plan::{Check, Lookups, Next, Sequence, Single, Step},
 };
 
 static TOKEN_A: LazyLock<Regex> =
@@ -100,6 +112,38 @@ fn api_said_ok(response: &Response) -> bool {
         .ok()
         .and_then(|answer| answer.get("ok")?.as_bool())
         .unwrap_or(false)
+}
+
+/// The upload address answers `OK - <size>`.
+fn upload_said_ok(response: &Response) -> bool {
+    response.body.expose().windows(2).any(|pair| pair == b"OK") || api_said_ok(response)
+}
+
+/// `files.completeUploadExternal` has to say `ok` and name the files it shared.
+fn shared_the_files(response: &Response) -> bool {
+    let Ok(answer) = serde_json::from_slice::<Value>(response.body.expose()) else {
+        return false;
+    };
+    answer.get("ok").and_then(Value::as_bool) == Some(true)
+        && answer
+            .get("files")
+            .and_then(Value::as_array)
+            .is_some_and(|files| !files.is_empty())
+}
+
+/// The channel or conversation that a message was posted to.
+fn read_channel(response: &Response) -> Option<String> {
+    let answer: Value = serde_json::from_slice(response.body.expose()).ok()?;
+    let channel = answer.get("channel")?.as_str()?;
+    (!channel.is_empty()).then(|| channel.to_owned())
+}
+
+/// The file id and the address to send the file to.
+fn read_upload(response: &Response) -> Option<(String, String)> {
+    let answer: Value = serde_json::from_slice(response.body.expose()).ok()?;
+    let id = answer.get("file_id")?.as_str()?;
+    let address = answer.get("upload_url")?.as_str()?;
+    (!id.is_empty() && !address.is_empty()).then(|| (id.to_owned(), address.to_owned()))
 }
 
 /// The user id in the answer to `users.lookupByEmail`.
@@ -426,9 +470,26 @@ impl Slack {
         options: &Options,
         notification: &Notification,
     ) -> Vec<PreparedRequest> {
+        self.requests(options, notification).0
+    }
+
+    /// The requests, and how many of them belong to the first part of the
+    /// message.
+    fn requests(
+        &self,
+        options: &Options,
+        notification: &Notification,
+    ) -> (Vec<PreparedRequest>, usize) {
         let url = self.url();
         let mut requests = Vec::new();
-        for (title, body) in message::parts(notification, 250, 35000, options.overflow) {
+        let mut first_part = None;
+        for (part, (title, body)) in message::parts(notification, 250, 35000, options.overflow)
+            .into_iter()
+            .enumerate()
+        {
+            if part == 1 {
+                first_part = Some(requests.len());
+            }
             if matches!(self.mode, Mode::Workflow | Mode::Trigger) {
                 let markdown = message::format(options, notification) == Format::Markdown;
                 let body = if markdown { body } else { escape(&body) };
@@ -470,7 +531,8 @@ impl Slack {
                 requests.push(request);
             }
         }
-        requests
+        let first_part = first_part.unwrap_or(requests.len());
+        (requests, first_part)
     }
 
     /// How to tell from an answer that Slack accepted a message.
@@ -482,45 +544,124 @@ impl Slack {
         }
     }
 
-    /// [`prepare`](Self::prepare) with every answer read, the failures Apprise
-    /// reports for targets that cannot be used, and, for a bot, the lookup of
-    /// the users that were given as e-mail addresses.
-    pub(crate) fn plan(&self, options: &Options, notification: &Notification) -> Plan {
-        let check = self.check();
-        let mut plan = Plan::checked(self.prepare(options, notification), check);
-        if matches!(self.mode, Mode::Workflow | Mode::Trigger) {
-            return plan;
-        }
-        // Posts to a user that is only known by e-mail address, and who it is.
-        let mut by_mail: Vec<(String, Value)> = Vec::new();
-        for (title, body) in message::parts(notification, 250, 35000, options.overflow) {
+    /// The posts to users that are only known by e-mail address, as the address,
+    /// what is posted and whether it is part of the first message, and how many
+    /// targets cannot be used at all.
+    fn mail_targets(
+        &self,
+        options: &Options,
+        notification: &Notification,
+    ) -> (Vec<(String, Value, bool)>, usize) {
+        let mut by_mail = Vec::new();
+        let mut unusable = 0;
+        for (part, (title, body)) in message::parts(notification, 250, 35000, options.overflow)
+            .into_iter()
+            .enumerate()
+        {
             for channel in self.channels.iter().flatten() {
                 if let Some(address) = email_of(channel) {
                     if self.mode == Mode::Bot {
                         let payload = self.payload(options, notification, &title, &body);
-                        by_mail.push((address, payload));
+                        by_mail.push((address, payload, part == 0));
                     } else {
                         // Only a bot can look a user up.
-                        plan = plan.failed(TransportError::InvalidRequest);
+                        unusable += 1;
                     }
                 } else if !CHANNEL.is_match(channel) {
-                    plan = plan.failed(TransportError::InvalidRequest);
+                    unusable += 1;
                 }
             }
         }
-        let (Some(token), false) = (self.access_token.clone(), by_mail.is_empty()) else {
+        (by_mail, unusable)
+    }
+
+    /// [`prepare`](Self::prepare) with every answer read, the failures Apprise
+    /// reports for targets that cannot be used, and, for a bot, the lookup of
+    /// the users that were given as e-mail addresses and the upload of files.
+    pub(crate) fn plan(&self, options: &Options, notification: &Notification) -> Plan {
+        let check = self.check();
+        let (requests, first_part) = self.requests(options, notification);
+        if matches!(self.mode, Mode::Workflow | Mode::Trigger) {
+            return Plan::checked(requests, check);
+        }
+        // Only a bot can send files, and Apprise ignores them for a webhook.
+        let files: Vec<Attachment> = if self.mode == Mode::Bot {
+            notification.carried(options.overflow).to_vec()
+        } else {
+            Vec::new()
+        };
+        let (by_mail, unusable) = self.mail_targets(options, notification);
+        // Without files every request is independent. With files, the posts
+        // have to be a sequence, because their answers say where the files go.
+        let (independent, sequenced) = if files.is_empty() {
+            (requests, Vec::new())
+        } else {
+            (Vec::new(), requests)
+        };
+        let mut plan = Plan::checked(independent, check);
+        for _ in 0..unusable {
+            plan = plan.failed(TransportError::InvalidRequest);
+        }
+        let Some(token) = self.access_token.clone().filter(|_| self.mode == Mode::Bot) else {
             return plan;
         };
-        let mut addresses: Vec<String> = Vec::new();
-        for (address, _) in &by_mail {
-            if !addresses.contains(address) {
-                addresses.push(address.clone());
-            }
+        if by_mail.is_empty() && files.is_empty() {
+            return plan;
         }
         let url = self.url();
         let policy = options.policy();
-        let bearer = move || SecretString::new(format!("Bearer {}", token.expose()));
-        let lookup_bearer = bearer.clone();
+        let bearer = BearerToken(token);
+        // What goes out once every address is known.
+        let deliveries = {
+            let bearer = bearer.clone();
+            move |found: &HashMap<String, String>| -> Vec<Box<dyn Sequence>> {
+                let mail = by_mail
+                    .into_iter()
+                    .filter_map(|(address, mut payload, first)| {
+                        payload["channel"] = json!(found.get(&address)?);
+                        let mut request = PreparedRequest::json(&url, &payload).with_policy(policy);
+                        request
+                            .headers
+                            .insert("Authorization".to_owned(), bearer.header());
+                        Some((Step::delivery(request).checked(Some(api_said_ok)), first))
+                    });
+                if files.is_empty() {
+                    return Single::each(mail.map(|(step, _)| step).collect());
+                }
+                // The first message's posts tell where the files go.
+                let direct = sequenced.into_iter().enumerate().map(|(index, request)| {
+                    (Step::delivery(request).checked(check), index < first_part)
+                });
+                let posts: VecDeque<(Step, bool)> = direct.chain(mail).collect();
+                if posts.is_empty() {
+                    return Vec::new();
+                }
+                vec![Box::new(Posts {
+                    queue: posts,
+                    collect: false,
+                    channels: Vec::new(),
+                    files,
+                    bearer,
+                    policy,
+                })]
+            }
+        };
+        let mut addresses: Vec<String> = Vec::new();
+        // The deliveries are built for the addresses that were found, so the
+        // list has to be taken before they are.
+        for channel in self.channels.iter().flatten() {
+            if let Some(address) = email_of(channel) {
+                if !addresses.contains(&address) {
+                    addresses.push(address);
+                }
+            }
+        }
+        if addresses.is_empty() || self.mode != Mode::Bot {
+            for sequence in deliveries(&HashMap::new()) {
+                plan = plan.then(sequence);
+            }
+            return plan;
+        }
         plan.then(Lookups::new(
             addresses,
             move |address| {
@@ -533,24 +674,11 @@ impl Slack {
                         .with_policy(policy);
                 request
                     .headers
-                    .insert("Authorization".to_owned(), lookup_bearer());
+                    .insert("Authorization".to_owned(), bearer.header());
                 Step::setup(request).checked(Some(api_said_ok))
             },
             read_user_id,
-            move |found| {
-                Single::each(
-                    by_mail
-                        .into_iter()
-                        .filter_map(|(address, mut payload)| {
-                            payload["channel"] = json!(found.get(&address)?);
-                            let mut request =
-                                PreparedRequest::json(&url, &payload).with_policy(policy);
-                            request.headers.insert("Authorization".to_owned(), bearer());
-                            Some(Step::delivery(request).checked(Some(api_said_ok)))
-                        })
-                        .collect(),
-                )
-            },
+            deliveries,
         ))
     }
 
@@ -593,6 +721,188 @@ mod tests {
             ("bob@x", None),
         ] {
             assert_eq!(email_of(target).as_deref(), address, "target: {target}");
+        }
+    }
+}
+
+/// A bot token, and the header that carries it.
+#[derive(Clone)]
+struct BearerToken(SecretString);
+
+impl BearerToken {
+    fn header(&self) -> SecretString {
+        SecretString::new(format!("Bearer {}", self.0.expose()))
+    }
+}
+
+/// Every message of a bot that sends files: the messages go out, the channels
+/// Slack names in its answers to the first one's posts are remembered, and then
+/// every file is sent to them.
+struct Posts {
+    queue: VecDeque<(Step, bool)>,
+    /// Whether the answer to the request handed out last names a channel.
+    collect: bool,
+    channels: Vec<String>,
+    files: Vec<Attachment>,
+    bearer: BearerToken,
+    policy: RequestPolicy,
+}
+
+impl Posts {
+    fn pop(&mut self) -> Option<Step> {
+        let (step, collect) = self.queue.pop_front()?;
+        self.collect = collect;
+        Some(step)
+    }
+}
+
+impl Sequence for Posts {
+    fn start(&mut self) -> Step {
+        self.pop()
+            .expect("posts are planned only when there is something to post")
+    }
+
+    fn answer(&mut self, result: Result<&Response, &TransportError>) -> Next {
+        let mut unidentified = false;
+        if let (true, Ok(response)) = (self.collect, result) {
+            match read_channel(response) {
+                Some(channel) if !self.channels.contains(&channel) => self.channels.push(channel),
+                Some(_) => {}
+                // The message is out, but the files have nowhere to go.
+                None => unidentified = true,
+            }
+        }
+        let next = match self.pop() {
+            Some(step) => Next::go(step),
+            None => Next::then(self.uploads()),
+        };
+        if unidentified {
+            next.with_failure(TransportError::InvalidResponse)
+        } else {
+            next
+        }
+    }
+}
+
+impl Posts {
+    /// One sequence for each file, once the channels are known.
+    fn uploads(&mut self) -> Vec<Box<dyn Sequence>> {
+        if self.channels.is_empty() {
+            return Vec::new();
+        }
+        self.files
+            .iter()
+            .enumerate()
+            .map(|(index, file)| {
+                Box::new(Upload {
+                    stage: UploadStage::Address,
+                    name: file.name_or_default(index + 1),
+                    file: file.clone(),
+                    channels: self.channels.iter().cloned().collect(),
+                    bearer: self.bearer.clone(),
+                    policy: self.policy,
+                    file_id: String::new(),
+                }) as Box<dyn Sequence>
+            })
+            .collect()
+    }
+}
+
+#[derive(Clone, Copy)]
+enum UploadStage {
+    Address,
+    Upload,
+    Share,
+}
+
+/// One file: ask for an address, send it there, share it into every channel.
+struct Upload {
+    stage: UploadStage,
+    name: String,
+    file: Attachment,
+    /// The channels it is not shared into yet.
+    channels: VecDeque<String>,
+    bearer: BearerToken,
+    policy: RequestPolicy,
+    file_id: String,
+}
+
+impl Upload {
+    /// The request for the file's upload address.
+    fn address(&self) -> Step {
+        let query = format!(
+            "filename={}&length={}",
+            grammar::form_encode(&self.name),
+            self.file.len()
+        );
+        let mut request = PreparedRequest::with_body(
+            Method::Get,
+            format!("https://slack.com/api/files.getUploadURLExternal?{query}"),
+            None,
+            Vec::<u8>::new(),
+        )
+        .with_policy(self.policy);
+        request
+            .headers
+            .insert("Authorization".to_owned(), self.bearer.header());
+        Step::setup(request).checked(Some(api_said_ok))
+    }
+
+    /// The upload itself. The address is Slack's, but it has no use for the
+    /// token.
+    fn upload(&self, address: &str) -> Step {
+        let (content_type, body) = Multipart::new()
+            .file("file", &self.name, None, self.file.data())
+            .finish();
+        let request = PreparedRequest::with_body(Method::Post, address, Some(&content_type), body)
+            .with_policy(self.policy);
+        Step::setup(request).checked(Some(upload_said_ok))
+    }
+
+    /// The next channel to share the file into, if there is one.
+    fn share(&mut self) -> Next {
+        let Some(channel) = self.channels.pop_front() else {
+            return Next::done();
+        };
+        let payload = json!({
+            "files": [{"id": self.file_id, "title": self.name}],
+            "channel_id": channel,
+        });
+        let mut request = PreparedRequest::json(
+            "https://slack.com/api/files.completeUploadExternal",
+            &payload,
+        )
+        .with_policy(self.policy);
+        request
+            .headers
+            .insert("Authorization".to_owned(), self.bearer.header());
+        Next::go(Step::delivery(request).checked(Some(shared_the_files)))
+    }
+}
+
+impl Sequence for Upload {
+    fn start(&mut self) -> Step {
+        self.address()
+    }
+
+    fn answer(&mut self, result: Result<&Response, &TransportError>) -> Next {
+        match (self.stage, result) {
+            (UploadStage::Address, Ok(response)) => match read_upload(response) {
+                Some((id, address)) => {
+                    self.file_id = id;
+                    self.stage = UploadStage::Upload;
+                    Next::go(self.upload(&address))
+                }
+                None => Next::fail(TransportError::InvalidResponse),
+            },
+            (UploadStage::Upload, Ok(_)) => {
+                self.stage = UploadStage::Share;
+                self.share()
+            }
+            (UploadStage::Share, _) => self.share(),
+            // A failed request is already a failure of the plan, and the file
+            // cannot go on without it.
+            (_, Err(_)) => Next::done(),
         }
     }
 }

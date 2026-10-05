@@ -39,7 +39,7 @@ workflows = ["_services", "_validate", "_query", "_verify", "_flag", "_to_map", 
 mattermost = ["_services", "_sequence", "_lookups", "_multipart", "dep:regex", "_token", "_verify", "_quote", "_list", "_flag", "_paths", "_format", "_merged"]
 rocketchat = ["_services", "_sequence", "dep:regex", "_verify", "_query", "_list", "_flag", "_paths", "_format", "_merged"]
 pushover = ["_services", "_multipart", "dep:regex", "_token", "_pairs", "_list", "_flag", "_paths", "_any_host", "_format", "_parts"]
-slack = ["_services", "_sequence", "_lookups", "_validate", "_query", "_list", "_flag", "_to_map", "_paths", "_payload", "_optional_host", "_format", "_parts"]
+slack = ["_services", "_sequence", "_lookups", "_multipart", "_validate", "_query", "_list", "_flag", "_to_map", "_paths", "_payload", "_optional_host", "_format", "_parts"]
 
 # Internal features. Set by every service.
 _services = []

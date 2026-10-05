@@ -1,18 +1,24 @@
 //! `tocsin`: send one notification to many services from Apprise-style URLs.
 
 use std::{
+    fs,
     io::{self, IsTerminal, Read, Write},
+    path::{Path, PathBuf},
     process::ExitCode,
 };
 
 use clap::{Parser, ValueEnum};
 use tocsin::{
-    Format, Kind, Notification, Notifier, Outcome, PreparedRequest, Response, Transport,
-    TransportError, UreqTransport,
+    Attachment, Format, Kind, Notification, Notifier, Outcome, PreparedRequest, Response,
+    Transport, TransportError, UreqTransport,
 };
 
 /// The most text read from standard input.
 const MAX_STDIN_BYTES: u64 = 1 << 20;
+
+/// The largest file that is attached. It is held in memory, and Telegram, the
+/// service with the most generous limit, takes 50 MB.
+const MAX_ATTACHMENT_BYTES: u64 = 50 * 1024 * 1024;
 
 /// Send one notification to every service URL.
 ///
@@ -43,6 +49,12 @@ struct Cli {
     /// The format of the body.
     #[arg(short, long, value_enum, default_value_t = FormatArg::Text)]
     input_format: FormatArg,
+
+    /// A file to send along; give it more than once for more files. Services
+    /// that cannot carry files send the message without them, and the message
+    /// may be left out when there is a file.
+    #[arg(short, long, value_name = "FILE")]
+    attach: Vec<PathBuf>,
 
     /// Print the host of each request instead of sending it.
     #[arg(short, long)]
@@ -128,11 +140,18 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             .map_err(|error| format!("URL {}: {error}", index + 1))?;
     }
 
+    let attachments = cli
+        .attach
+        .iter()
+        .map(|path| read_attachment(path))
+        .collect::<Result<Vec<_>, _>>()?;
     let body = match cli.body {
         Some(body) => body,
+        // A file can be sent on its own, so a terminal is not an error then.
+        None if !attachments.is_empty() && io::stdin().is_terminal() => String::new(),
         None => read_stdin()?,
     };
-    if body.trim().is_empty() {
+    if body.trim().is_empty() && attachments.is_empty() {
         return Err("the message is empty".to_owned());
     }
     let mut notification = Notification::new(body)
@@ -141,24 +160,58 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
     if let Some(title) = cli.title {
         notification = notification.title(title);
     }
+    for attachment in attachments {
+        notification = notification.attach(attachment);
+    }
 
     let report = if cli.dry_run {
         notifier.send(&notification, &mut DryRun)
     } else {
         notifier.send(&notification, &mut UreqTransport)
     };
+    let mut failed = false;
     for receipt in report.failures() {
         let reason = match &receipt.outcome {
-            Outcome::Failed(error) => error.to_string(),
-            _ => "nothing to send (the URL has no target)".to_owned(),
+            // A dry run gets no real answers, so the requests that depend on
+            // one, or that read one, cannot be shown and are not failures.
+            Outcome::Failed(TransportError::InvalidResponse | TransportError::Rejected)
+                if cli.dry_run =>
+            {
+                "the answer of the service is not read in a dry run, so requests that depend on it are not shown".to_owned()
+            }
+            Outcome::Failed(error) => {
+                failed = true;
+                error.to_string()
+            }
+            _ => {
+                failed = true;
+                "nothing to send (the URL has no target)".to_owned()
+            }
         };
         let _ = writeln!(io::stderr(), "tocsin: {}: {reason}", receipt.service);
     }
-    Ok(if report.is_success() {
-        ExitCode::SUCCESS
-    } else {
+    Ok(if failed || report.receipts().is_empty() {
         ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
     })
+}
+
+/// A file to attach, named after the last part of its path.
+fn read_attachment(path: &Path) -> Result<Attachment, String> {
+    // The path is the user's own, so it is fine to show, but not what is inside.
+    let shown = path.display();
+    let size = fs::metadata(path)
+        .map_err(|_| format!("cannot read {shown}"))?
+        .len();
+    if size > MAX_ATTACHMENT_BYTES {
+        return Err(format!("{shown} is larger than 50 MiB"));
+    }
+    let data = fs::read(path).map_err(|_| format!("cannot read {shown}"))?;
+    let name = path
+        .file_name()
+        .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+    Ok(Attachment::new(name, data))
 }
 
 /// The message from a pipe or file; an interactive terminal is a usage error.

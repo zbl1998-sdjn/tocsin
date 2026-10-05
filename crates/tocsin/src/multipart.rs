@@ -4,6 +4,10 @@
 
 /// What one part holds.
 enum Content<'a> {
+    #[allow(
+        dead_code,
+        reason = "Slack only sends files, so a build with only Slack has no field"
+    )]
     Field(&'a str),
     File {
         filename: &'a str,
@@ -45,6 +49,10 @@ impl<'a> Multipart<'a> {
 
     /// A plain field.
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "Slack only sends files, so a build with only Slack has no field"
+    )]
     pub(crate) fn field(mut self, name: &'a str, value: &'a str) -> Self {
         self.parts.push(Part {
             name,

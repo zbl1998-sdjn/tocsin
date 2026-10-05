@@ -786,3 +786,210 @@ mod telegram {
         );
     }
 }
+
+#[cfg(feature = "slack")]
+mod slack_files {
+    use serde_json::json;
+    use tocsin::{Attachment, Notification, Outcome, Response, TransportError};
+
+    use super::*;
+
+    const BOT: &str = "slack://xoxb-1234-1234-abc124/ops/dev";
+
+    /// Slack's side of messages, lookups and uploads.
+    #[allow(clippy::unnecessary_wraps, reason = "the shape a transport answers in")]
+    fn slack(request: &PreparedRequest) -> Result<Response, TransportError> {
+        let url = request.url.expose();
+        let answer = if url.contains("users.lookupByEmail") {
+            let user = url.rsplit("email=").next().unwrap_or("");
+            let user = user.split("%40").next().unwrap_or("");
+            json!({"ok": true, "user": {"id": format!("U-{user}")}})
+        } else if url.contains("chat.postMessage") {
+            let channel = json_body(request)["channel"]
+                .as_str()
+                .unwrap_or("")
+                .to_owned();
+            // A user is answered with the conversation that was opened for them.
+            let conversation = match channel.strip_prefix("U-") {
+                Some(user) => format!("D-{user}"),
+                None => format!("C{}", channel.trim_start_matches('#')),
+            };
+            json!({"ok": true, "channel": conversation})
+        } else if url.contains("getUploadURLExternal") {
+            json!({"ok": true, "file_id": "F1", "upload_url": "https://files.slack.com/upload/v1/ABC"})
+        } else if url.starts_with("https://files.slack.com/") {
+            return Ok(Response::with_body(200, "OK - 3"));
+        } else if url.contains("completeUploadExternal") {
+            json!({"ok": true, "files": [{"id": "F1"}]})
+        } else {
+            json!({"ok": true})
+        };
+        Ok(Response::with_body(200, answer.to_string()))
+    }
+
+    fn with_files() -> Notification {
+        Notification::new("Body")
+            .attach(Attachment::new("a.txt", b"one".to_vec()))
+            .attach(Attachment::new("b.bin", b"two".to_vec()))
+    }
+
+    fn failures(report: &tocsin::Report) -> Vec<Outcome> {
+        report.failures().map(|r| r.outcome.clone()).collect()
+    }
+
+    #[test]
+    fn a_bot_shares_every_file_into_every_channel_the_message_went_to() {
+        let mut transport = Scripted::new(slack);
+        let report = notifier(BOT).send(&with_files(), &mut transport);
+        assert!(report.is_success(), "{:?}", failures(&report));
+        // The messages, and then each file's three steps.
+        assert_eq!(
+            transport.calls(),
+            [
+                "POST /api/chat.postMessage",
+                "POST /api/chat.postMessage",
+                "GET /api/files.getUploadURLExternal?filename=a.txt&length=3",
+                "POST /upload/v1/ABC",
+                "POST /api/files.completeUploadExternal",
+                "POST /api/files.completeUploadExternal",
+                "GET /api/files.getUploadURLExternal?filename=b.bin&length=3",
+                "POST /upload/v1/ABC",
+                "POST /api/files.completeUploadExternal",
+                "POST /api/files.completeUploadExternal",
+            ]
+        );
+        // Two messages and four shares are deliveries; the rest only sets up.
+        assert_eq!(report.receipts().len(), 2 + 4);
+
+        let address = &transport.seen[2];
+        assert_eq!(
+            address.headers["Authorization"].expose(),
+            "Bearer xoxb-1234-1234-abc124"
+        );
+        let upload = &transport.seen[3];
+        assert!(
+            !upload.headers.contains_key("Authorization"),
+            "the token stays home"
+        );
+        assert_eq!(
+            upload.body.text(),
+            "--tocsin-0\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\n\r\none\r\n--tocsin-0--\r\n"
+        );
+        assert_eq!(
+            json_body(&transport.seen[4]),
+            json!({"files": [{"id": "F1", "title": "a.txt"}], "channel_id": "Cdev"})
+        );
+        assert_eq!(json_body(&transport.seen[5])["channel_id"], json!("Cops"));
+    }
+
+    #[test]
+    fn a_user_known_by_e_mail_gets_the_files_in_their_conversation() {
+        let mut transport = Scripted::new(slack);
+        let url = "slack://xoxb-1234-1234-abc124/bob@example.com";
+        let notification =
+            Notification::new("Body").attach(Attachment::new("a.txt", b"one".to_vec()));
+        let report = notifier(url).send(&notification, &mut transport);
+        assert!(report.is_success(), "{:?}", failures(&report));
+        assert_eq!(
+            transport.calls(),
+            [
+                "GET /api/users.lookupByEmail?email=bob%40example.com",
+                "POST /api/chat.postMessage",
+                "GET /api/files.getUploadURLExternal?filename=a.txt&length=3",
+                "POST /upload/v1/ABC",
+                "POST /api/files.completeUploadExternal",
+            ]
+        );
+        assert_eq!(json_body(&transport.seen[4])["channel_id"], json!("D-bob"));
+    }
+
+    #[test]
+    fn a_message_slack_does_not_place_leaves_the_files_nowhere_to_go() {
+        let mut transport = Scripted::new(|request: &PreparedRequest| {
+            if request.url.expose().contains("chat.postMessage") {
+                Ok(Response::with_body(200, r#"{"ok":true}"#))
+            } else {
+                slack(request)
+            }
+        });
+        let report =
+            notifier("slack://xoxb-1234-1234-abc124/ops").send(&with_files(), &mut transport);
+        assert_eq!(transport.calls(), ["POST /api/chat.postMessage"]);
+        assert_eq!(
+            failures(&report),
+            [Outcome::Failed(TransportError::InvalidResponse)]
+        );
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_uploaded_does_not_keep_the_others() {
+        let mut transport = Scripted::new(|request: &PreparedRequest| {
+            if request.url.expose().contains("filename=a.txt") {
+                Ok(Response::with_body(
+                    200,
+                    r#"{"ok":false,"error":"missing_scope"}"#,
+                ))
+            } else {
+                slack(request)
+            }
+        });
+        let report =
+            notifier("slack://xoxb-1234-1234-abc124/ops").send(&with_files(), &mut transport);
+        // The message, the failed address, then the second file in full.
+        assert_eq!(transport.calls().len(), 1 + 1 + 3);
+        assert_eq!(
+            failures(&report),
+            [Outcome::Failed(TransportError::Rejected)]
+        );
+    }
+
+    #[test]
+    fn an_upload_slack_did_not_accept_is_not_shared() {
+        let mut transport = Scripted::new(|request: &PreparedRequest| {
+            if request.url.expose().starts_with("https://files.slack.com/") {
+                Ok(Response::with_body(200, "denied"))
+            } else {
+                slack(request)
+            }
+        });
+        let notification =
+            Notification::new("Body").attach(Attachment::new("a.txt", b"one".to_vec()));
+        let report =
+            notifier("slack://xoxb-1234-1234-abc124/ops").send(&notification, &mut transport);
+        assert_eq!(transport.calls().len(), 3, "no share after the upload");
+        assert_eq!(
+            failures(&report),
+            [Outcome::Failed(TransportError::Rejected)]
+        );
+    }
+
+    #[test]
+    fn a_webhook_ignores_the_files() {
+        let mut transport = Scripted::new(|_: &PreparedRequest| Ok(Response::with_body(200, "ok")));
+        let report =
+            notifier("slack://TFAKE1/BFAKE2/CFAKE3/ops").send(&with_files(), &mut transport);
+        assert!(report.is_success());
+        assert_eq!(transport.seen.len(), 1);
+    }
+
+    #[test]
+    fn the_files_go_with_the_first_part_of_a_long_message_only() {
+        let mut transport = Scripted::new(slack);
+        let url = "slack://xoxb-1234-1234-abc124/ops?overflow=split";
+        let notification = Notification::new("word ".repeat(10_000))
+            .attach(Attachment::new("a.txt", b"one".to_vec()));
+        let report = notifier(url).send(&notification, &mut transport);
+        assert!(report.is_success(), "{:?}", failures(&report));
+        let calls = transport.calls();
+        let uploads = calls
+            .iter()
+            .filter(|call| call.contains("getUploadURLExternal"))
+            .count();
+        assert_eq!(uploads, 1);
+        let messages = calls
+            .iter()
+            .filter(|call| call.contains("chat.postMessage"))
+            .count();
+        assert!(messages > 1);
+    }
+}
