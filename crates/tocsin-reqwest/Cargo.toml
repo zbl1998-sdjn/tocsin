@@ -1,0 +1,32 @@
+[package]
+name = "tocsin-reqwest"
+description = "A non-blocking reqwest transport for tocsin: send Apprise-style notifications from async code."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["notification", "apprise", "reqwest", "async", "alert"]
+categories = ["network-programming", "asynchronous"]
+readme = "README.md"
+include = ["src/**/*", "README.md", "LICENSE-*"]
+
+[features]
+default = ["rustls", "system-proxy"]
+# TLS with rustls, as reqwest's own default.
+rustls = ["reqwest/rustls"]
+# Read HTTP_PROXY, HTTPS_PROXY and ALL_PROXY, which reqwest does by default.
+system-proxy = ["reqwest/system-proxy"]
+
+[dependencies]
+tocsin = { path = "../tocsin", version = "0.2.0", default-features = false }
+reqwest = { version = "0.13", default-features = false }
+
+[dev-dependencies]
+tocsin = { path = "../tocsin", version = "0.2.0", default-features = false, features = ["json", "form", "rocketchat"] }
+tokio = { version = "1", features = ["rt", "macros", "net", "io-util", "time"] }
+
+[lints]
+workspace = true
