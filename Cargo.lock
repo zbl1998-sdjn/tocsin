@@ -1200,7 +1200,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tocsin"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "http",
@@ -1213,7 +1213,7 @@ dependencies = [
 
 [[package]]
 name = "tocsin-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "serde_json",
@@ -1222,7 +1222,7 @@ dependencies = [
 
 [[package]]
 name = "tocsin-reqwest"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "reqwest",
  "tocsin",
