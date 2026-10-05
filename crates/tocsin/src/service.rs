@@ -12,8 +12,11 @@ enum Inner {
     #[cfg(feature = "discord")]
     Discord(crate::services::discord::Discord),
     #[cfg(feature = "ntfy")]
-    // Ntfy and Pushover are boxed: they are far larger than the small services
-    // (Feishu is a token), and an enum is as large as its largest variant.
+    // The four services of more than 200 bytes are boxed (ntfy, Pushover,
+    // PagerDuty and Bark). An enum is as large as its largest variant, and clippy
+    // refuses one whose largest variant is more than 200 bytes larger than the
+    // next, which a build with one of them and a small service (Feishu is a
+    // token) would be.
     Ntfy(Box<crate::services::ntfy::Ntfy>),
     #[cfg(feature = "gotify")]
     Gotify(crate::services::gotify::Gotify),
@@ -42,11 +45,11 @@ enum Inner {
     #[cfg(feature = "xml")]
     Xml(crate::services::xml::Xml),
     #[cfg(feature = "pagerduty")]
-    PagerDuty(crate::services::pagerduty::PagerDuty),
+    PagerDuty(Box<crate::services::pagerduty::PagerDuty>),
     #[cfg(feature = "gchat")]
     GoogleChat(crate::services::gchat::GoogleChat),
     #[cfg(feature = "bark")]
-    Bark(crate::services::bark::Bark),
+    Bark(Box<crate::services::bark::Bark>),
     #[cfg(feature = "signal")]
     SignalApi(crate::services::signal::SignalApi),
     #[cfg(feature = "homeassistant")]
@@ -161,13 +164,13 @@ impl Service {
                 .map(|(options, service)| Self::new(options, Inner::Xml(service))),
             #[cfg(feature = "pagerduty")]
             "pagerduty" => crate::services::pagerduty::parse(input)
-                .map(|(options, service)| Self::new(options, Inner::PagerDuty(service))),
+                .map(|(options, service)| Self::new(options, Inner::PagerDuty(Box::new(service)))),
             #[cfg(feature = "gchat")]
             "gchat" => crate::services::gchat::parse(input)
                 .map(|(options, service)| Self::new(options, Inner::GoogleChat(service))),
             #[cfg(feature = "bark")]
             "bark" | "barks" => crate::services::bark::parse(input)
-                .map(|(options, service)| Self::new(options, Inner::Bark(service))),
+                .map(|(options, service)| Self::new(options, Inner::Bark(Box::new(service)))),
             #[cfg(feature = "signal")]
             "signal" | "signals" => crate::services::signal::parse(input)
                 .map(|(options, service)| Self::new(options, Inner::SignalApi(service))),
