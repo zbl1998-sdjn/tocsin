@@ -10,9 +10,18 @@ requests. A tocsin is an alarm bell.
 Eighteen services work today: Telegram, Discord, ntfy, Gotify, Slack, Mattermost,
 Rocket.Chat, Pushover, Pushbullet, Prowl, IFTTT, Zulip, PagerDuty, Google Chat,
 Microsoft Teams (workflows), and a JSON, an XML and a form webhook. Apprise has
-over a hundred, so check the list below before you depend on this. Nothing has
-been sent to the real services in anyone's production yet: the tests use a local
-server and compare the URLs with Apprise.
+over a hundred, so check the list below before you depend on this.
+
+How far it has been checked against real servers (2026-10-05): the tests use a
+local server and compare the URLs with Apprise. An opt-in test
+(`cargo test --test live -- --ignored`) sends to `ntfy.sh` over TLS, with both
+transports, and reads a message and a file back unchanged, and to `httpbin.org`,
+which parses the JSON, form, multipart and XML bodies with its own HTTP stack.
+Requests with deliberately fake credentials reached the real Telegram, Discord,
+Slack, Pushover, Pushbullet, Prowl, IFTTT, PagerDuty, Google Chat and Zulip
+endpoints, which answered with credential errors only. A delivery with real
+credentials has been verified for ntfy.sh and for nothing else, so a service
+that needs an account may still have a difference that only that account shows.
 
 ## Why it exists
 

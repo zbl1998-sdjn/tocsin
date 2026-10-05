@@ -31,9 +31,12 @@ cargo hack test -p tocsin --no-default-features \
 damages each fixture URL that many times and checks that nothing panics; the
 default is 60.
 
-Tests never touch the network: parsing and request building are pure, the CLI
-tests use `--dry-run` or a server on `127.0.0.1`, and fixtures use fake secrets
-that start with `FAKE_`.
+Tests never touch the network unless you ask: parsing and request building are
+pure, the CLI tests use `--dry-run` or a server on `127.0.0.1`, and fixtures use
+fake secrets that start with `FAKE_`. The tests in `tests/live.rs` of `tocsin`
+and `tocsin-reqwest` talk to `httpbin.org` and `ntfy.sh` (anonymous, random
+topic names, no credential) and are `#[ignore]`d; run them with
+`cargo test -p tocsin --all-features --test live -- --ignored --test-threads=1`.
 
 ## Adding a service
 
