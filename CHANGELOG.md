@@ -15,6 +15,15 @@ follows [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   Apprise. Their differences are in `DESIGN.md`. They have only met the local
   test server.
 - HMAC-SHA256 for the DingTalk signature, in the crate itself.
+- `tocsin --mcp`: an MCP server on standard input and output with a `notify`
+  tool and a `destinations` tool, for an agent that should decide when to send a
+  message. The agent supplies a title, a message and a kind, never a
+  destination; the URLs stay with the user. At most 10 messages a minute go out.
+
+### Changed
+
+- `Ntfy` and `Pushover` are boxed inside the service enum, so that a build with
+  only a small service and one of them is not rejected by `large_enum_variant`.
 
 ## [0.3.0] - 2026-10-05
 

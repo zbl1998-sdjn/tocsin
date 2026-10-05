@@ -114,6 +114,46 @@ not private; add `--include-message` to send the first 280 characters of it.
 exit status is 0 or 1, never 2: in a Claude Code hook 2 blocks the action, and
 `tocsin` returns it for a URL it cannot read when it is not run as a hook.
 
+### As an MCP tool
+
+A hook tells you what the agent did without asking it. If the agent should decide
+when to tell you, because a long task is done or because it is stuck and needs
+you, run `tocsin --mcp`. It is an MCP server on standard input and output with
+two tools: `notify` (a message, a title and a kind) and `destinations` (the names
+of the services, nothing else).
+
+The agent cannot choose where a message goes. The destinations are the URLs you
+gave, they hold tokens, and the agent never sees them, so an agent that was led
+astray by something it read cannot send anything anywhere else. A message has at
+most 4,000 characters, and at most 10 go out in a minute. Keep the URLs in the
+environment and not in the arguments, which other users of the machine can read.
+
+Claude Code takes the URLs from the environment it was started in, because its
+`.mcp.json` expands `${VAR}` in `env`
+([MCP documentation](https://code.claude.com/docs/en/mcp)):
+
+```json
+{
+  "mcpServers": {
+    "tocsin": {
+      "command": "tocsin",
+      "args": ["--mcp"],
+      "env": { "TOCSIN_URLS": "${TOCSIN_URLS}" }
+    }
+  }
+}
+```
+
+Codex forwards a variable of its own environment with `env_vars`
+([MCP page](https://learn.chatgpt.com/docs/extend/mcp)):
+
+```toml
+[mcp_servers.tocsin]
+command = "tocsin"
+args = ["--mcp"]
+env_vars = ["TOCSIN_URLS"]
+```
+
 ## Library
 
 ```rust

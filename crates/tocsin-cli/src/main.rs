@@ -1,6 +1,7 @@
 //! `tocsin`: send one notification to many services from Apprise-style URLs.
 
 mod hook;
+mod mcp;
 
 use std::{
     fs,
@@ -61,6 +62,16 @@ struct Cli {
     /// notification service is not private.
     #[arg(long, requires = "hook")]
     include_message: bool,
+
+    /// Run as an MCP server on standard input and output, with a `notify` tool
+    /// for an agent. The URLs are the only places it can send to: the agent
+    /// chooses a title, a message and a kind, never a destination, and at most
+    /// 10 notifications a minute go out.
+    #[arg(
+        long,
+        conflicts_with_all = ["body", "title", "notification_type", "hook", "include_message", "attach", "dry_run"]
+    )]
+    mcp: bool,
 
     /// The format of the body.
     #[arg(short, long, value_enum, default_value_t = FormatArg::Text)]
@@ -177,6 +188,14 @@ fn run(mut cli: Cli) -> Result<ExitCode, String> {
         notifier
             .add(url)
             .map_err(|error| format!("URL {}: {error}", index + 1))?;
+    }
+
+    if cli.mcp {
+        let mut transport = UreqTransport;
+        return mcp::Server::new(&notifier, &mut transport)
+            .run(io::stdin().lock(), io::stdout().lock())
+            .map(|()| ExitCode::SUCCESS)
+            .map_err(|error| format!("MCP: {error}"));
     }
 
     let attachments = cli

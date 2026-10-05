@@ -161,6 +161,31 @@ list of three identities ends after two, and the third becomes a service of its
 own. A URL with such a list does what it does in Apprise; if you want the other
 behavior, write one entry per path element.
 
+## The MCP mode
+
+`tocsin --mcp` is for the agent that should decide when to send a message. The
+risk is the reverse of the hook: the caller is a model that reads untrusted
+text, so what it can do has to be small.
+
+- The agent supplies a title, a message and a kind. It does not supply a URL, a
+  service or a file, and the schema of the tool has no field for them, so a
+  prompt injection can at most send text to the places the user chose.
+- The URLs hold tokens, so the second tool names the services (`telegram`,
+  `ntfy`) and nothing else, and an error never carries a URL.
+- A message is limited to 4,000 characters, a title to 200, and 10 messages go
+  out in any minute, so a loop cannot flood a phone.
+- Only what a server of tools needs is spoken: JSON-RPC 2.0, one message per
+  line, `initialize` (the version of the client is echoed when it is one of
+  2025-06-18, 2025-03-26 and 2024-11-05, and the newest is answered otherwise),
+  `ping`, `tools/list` and `tools/call`. Batches are refused, as the current
+  protocol has none. Standard output carries protocol only.
+- It was checked by hand with the client of the official TypeScript SDK 1.32.0
+  (2026-10-06): the handshake, the list of tools, a delivery to a local server,
+  an invalid call, an unknown tool and the limit. That check is not in the
+  repository, because it needs Node.
+- The sending is blocking and one message at a time: a slow service delays the
+  next request. That is acceptable for a tool that is called now and then.
+
 ## Secrets
 
 Everything that can hold a secret redacts itself in `Debug` and `Display`: a

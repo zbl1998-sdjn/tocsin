@@ -36,7 +36,9 @@ Twenty-six services are supported: Telegram, Discord, ntfy, Gotify, Slack,
 Mattermost, Rocket.Chat, Pushover, Pushbullet, Prowl, IFTTT, Zulip, PagerDuty,
 Google Chat, Bark, Signal, Home Assistant, Feishu, Lark, WeCom, ServerChan,
 DingTalk, Microsoft Teams (workflows), and a JSON, an XML and a form webhook.
-See the [repository](https://github.com/zbl1998-sdjn/tocsin) for
+`tocsin --mcp` runs an MCP server on standard input and output with a `notify`
+tool, for an agent that should decide when to message you; it can only send to
+the URLs you gave. See the [repository](https://github.com/zbl1998-sdjn/tocsin) for
 the options each one applies and how tocsin differs from Apprise.
 
 Licensed under MIT or Apache-2.0.

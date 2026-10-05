@@ -225,6 +225,7 @@ fn help_lists_the_options() {
         "--notification-type",
         "--attach",
         "--dry-run",
+        "--mcp",
     ] {
         assert!(help.contains(flag), "{flag} missing from help");
     }
@@ -411,6 +412,60 @@ fn a_hook_never_exits_with_two() {
 fn the_agents_text_cannot_be_asked_for_without_a_hook() {
     let output = tocsin()
         .args(["--include-message", "-b", "x", "ntfy://my-topic"])
+        .output()
+        .expect("run");
+    assert_eq!(code(&output), 2);
+}
+
+#[test]
+fn mcp_mode_notifies_only_through_the_urls_it_was_given() {
+    let (port, worker) = loopback(200);
+    let url = format!("json://127.0.0.1:{port}/hook");
+    let input = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        // An address in the arguments is not a field of the tool, so it is not read.
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"notify","arguments":{"body":"Deploy finished","title":"CI","kind":"success","url":"json://attacker.example/x"}}}"#,
+        "",
+    ]
+    .join("\n");
+    let output = run_with_stdin(
+        {
+            let mut command = tocsin();
+            command.args(["--mcp", &url]);
+            command
+        },
+        &input,
+    );
+    let received = worker.join().expect("worker");
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert!(
+        received.starts_with("POST /hook HTTP/1.1\r\n"),
+        "{received}"
+    );
+    assert!(received.contains("Deploy finished"));
+    assert!(!received.contains("attacker"));
+    let replies: Vec<serde_json::Value> = text(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("one JSON message per line"))
+        .collect();
+    // The notification `initialized` gets no answer.
+    assert_eq!(replies.len(), 2, "{replies:?}");
+    assert_eq!(replies[0]["result"]["serverInfo"]["name"], "tocsin");
+    assert_eq!(replies[1]["id"], 2);
+    assert_eq!(replies[1]["result"]["isError"], false, "{}", replies[1]);
+    // Nothing but protocol goes to standard output, and the URL goes nowhere.
+    let shown = format!("{}{}", text(&output.stdout), text(&output.stderr));
+    assert!(!shown.contains(&url));
+}
+
+#[test]
+fn mcp_mode_needs_urls_and_takes_no_message() {
+    let output = tocsin().arg("--mcp").output().expect("run");
+    assert_eq!(code(&output), 2);
+    assert!(text(&output.stderr).contains("no URL"));
+    let output = tocsin()
+        .args(["--mcp", "-b", "hello", "ntfy://my-topic"])
         .output()
         .expect("run");
     assert_eq!(code(&output), 2);
