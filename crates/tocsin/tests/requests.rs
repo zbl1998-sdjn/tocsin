@@ -1004,6 +1004,109 @@ fn ifttt_web_address_is_read_as_a_url() {
     assert!(body(&requests[0]).get("value3").is_none());
 }
 
+#[cfg(feature = "bark")]
+#[test]
+fn bark_sends_a_request_per_device_key_with_every_option() {
+    let service: Service = "barks://user:pass@push.example.com:8443/zeta/alpha?sound=NOiR&level=tx\
+        &badge=3&volume=7&call=yes&group=ops&category=chat&click=https://example.com/x\
+        &icon=https://example.com/i.png&format=markdown"
+        .parse()
+        .expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 2);
+    for request in &requests {
+        assert_eq!(request.url.expose(), "https://push.example.com:8443/push");
+        // "user:pass"
+        assert_eq!(
+            request.headers["Authorization"].expose(),
+            "Basic dXNlcjpwYXNz"
+        );
+    }
+    // Apprise takes the keys from the end of the sorted list.
+    assert_eq!(
+        body(&requests[0]),
+        json!({
+            "device_key": "zeta",
+            "title": "Title",
+            "markdown": "Body",
+            "sound": "noir.caf",
+            "level": "timeSensitive",
+            "badge": 3,
+            "volume": 7,
+            "call": 1,
+            "group": "ops",
+            "category": "chat",
+            "url": "https://example.com/x",
+            "icon": "https://example.com/i.png",
+        })
+    );
+    assert_eq!(body(&requests[1])["device_key"], "alpha");
+}
+
+#[cfg(feature = "bark")]
+#[test]
+fn bark_leaves_out_what_the_url_does_not_set() {
+    let service: Service = "bark://localhost/KEY".parse().expect("parse");
+    let requests = service.prepare(&Notification::new("Body"));
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].url.expose(), "http://localhost/push");
+    assert!(!requests[0].headers.contains_key("Authorization"));
+    assert_eq!(
+        body(&requests[0]),
+        json!({"device_key": "KEY", "body": "Body"})
+    );
+
+    // Zero and an out of range volume are not sent; a port of 0 is not used.
+    let service: Service = "bark://localhost:0/KEY?badge=0&volume=11&level=Active&sound=nope"
+        .parse()
+        .expect("parse");
+    let requests = service.prepare(&Notification::new("Body"));
+    assert_eq!(requests[0].url.expose(), "http://localhost/push");
+    assert_eq!(
+        body(&requests[0]),
+        json!({"device_key": "KEY", "body": "Body"})
+    );
+
+    // A user without a password sends an empty one.
+    let service: Service = "bark://user@localhost/KEY".parse().expect("parse");
+    let requests = service.prepare(&Notification::new("Body"));
+    // "user:"
+    assert_eq!(
+        requests[0].headers["Authorization"].expose(),
+        "Basic dXNlcjo="
+    );
+}
+
+#[cfg(feature = "bark")]
+#[test]
+fn bark_sends_nothing_when_it_cannot_do_what_the_url_asks() {
+    // Encryption is not done here, and plain text must not take its place.
+    let service: Service = "bark://localhost/KEY?key=0123456789abcdef"
+        .parse()
+        .expect("parse");
+    assert!(service.prepare(&notification("Body")).is_empty());
+    // No device keys.
+    let service: Service = "bark://localhost".parse().expect("parse");
+    assert!(service.prepare(&notification("Body")).is_empty());
+    // A key of the wrong length is not a Bark URL.
+    assert!("bark://localhost/KEY?key=short".parse::<Service>().is_err());
+}
+
+#[cfg(feature = "bark")]
+#[test]
+fn bark_splits_a_long_message_when_asked_to() {
+    let service: Service = "bark://localhost/KEY?overflow=split"
+        .parse()
+        .expect("parse");
+    let requests = service.prepare(&Notification::new("x".repeat(40000)));
+    assert_eq!(requests.len(), 2);
+    let sent: usize = requests
+        .iter()
+        .map(|request| body(request)["body"].as_str().expect("text").len())
+        .sum();
+    assert_eq!(sent, 40000);
+}
+
 #[cfg(feature = "_services")]
 #[test]
 fn credentials_in_urls_never_show_up_in_formatting() {
@@ -1026,6 +1129,8 @@ fn credentials_in_urls_never_show_up_in_formatting() {
         "xml://FAKE_user:FAKE_password@127.0.0.1/FAKE_token?+X-Key=FAKE_query_token",
         "pagerduty://FAKE_user@FAKE_token/FAKE_password?+key=FAKE_query_token",
         "gchat://FAKE_id/FAKE_token/FAKE_password/FAKE_query_token",
+        "bark://FAKE_user:FAKE_password@127.0.0.1/FAKE_token?group=FAKE_query_token",
+        "bark://FAKE_user:FAKE_password@127.0.0.1/FAKE_token?key=FAKE_query_token",
     ] {
         if let Ok(service) = url.parse::<Service>() {
             let requests = service.prepare(&notification("body"));

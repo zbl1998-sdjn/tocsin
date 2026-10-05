@@ -5,6 +5,8 @@
 //! a feature in `Cargo.toml`, fixtures for the Apprise oracle, and golden
 //! tests for the request.
 
+#[cfg(feature = "bark")]
+pub(crate) mod bark;
 #[cfg(feature = "discord")]
 pub(crate) mod discord;
 #[cfg(feature = "form")]
