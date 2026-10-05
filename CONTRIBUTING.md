@@ -87,7 +87,7 @@ Start from `src/services/gotify.rs`, the smallest one, or from
    ```sh
    git clone https://github.com/caronc/apprise ../apprise
    git -C ../apprise checkout 81739e9a1187f986a09281b5d0c25c806e8152e0
-   pip install requests requests-oauthlib PyYAML markdown click certifi
+   pip install requests requests-oauthlib PyYAML markdown click certifi cryptography
    python crates/tocsin/compat/apprise_oracle.py --apprise-dir ../apprise
    cargo test -p tocsin --all-features --test compat
    ```

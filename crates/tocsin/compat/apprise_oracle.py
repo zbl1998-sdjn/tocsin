@@ -4,7 +4,8 @@ Usage: python apprise_oracle.py --apprise-dir <checkout of caronc/apprise at
 81739e9a1187f986a09281b5d0c25c806e8152e0>   (or set APPRISE_DIR)
 
 Needs the packages Apprise itself imports: requests, requests-oauthlib,
-PyYAML, markdown, click and certifi. Rewrites oracle.json next to this file.
+PyYAML, markdown, click and certifi, and cryptography, without which Apprise
+rejects a Bark URL that has a key. Rewrites oracle.json next to this file.
 """
 import argparse
 import json
