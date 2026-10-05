@@ -5,7 +5,7 @@ the notification URLs of [Apprise](https://github.com/caronc/apprise)
 (`tgram://...`, `discord://...`, `ntfy://...`) and turns them into HTTP
 requests. A tocsin is an alarm bell.
 
-**Status: version 0.2.** The library is on [crates.io](https://crates.io/crates/tocsin)
+**Status: version 0.3.** The library is on [crates.io](https://crates.io/crates/tocsin)
 (`cargo add tocsin`) and its documentation is on [docs.rs](https://docs.rs/tocsin).
 Twenty-one services work today: Telegram, Discord, ntfy, Gotify, Slack, Mattermost,
 Rocket.Chat, Pushover, Pushbullet, Prowl, IFTTT, Zulip, PagerDuty, Google Chat,

@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-05
+
 ### Added
 
 - Bark (`bark://`, `barks://`), Signal through signal-cli-rest-api (`signal://`,
@@ -125,6 +127,7 @@ both on crates.io.
 - No attachments, body format conversion, retries or built-in async transport
   (the `http` feature hands requests to one).
 
-[Unreleased]: https://github.com/zbl1998-sdjn/tocsin/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/zbl1998-sdjn/tocsin/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/zbl1998-sdjn/tocsin/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/zbl1998-sdjn/tocsin/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/zbl1998-sdjn/tocsin/releases/tag/v0.1.0
