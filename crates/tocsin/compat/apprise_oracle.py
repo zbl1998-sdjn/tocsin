@@ -86,7 +86,8 @@ def normalize(obj):
                     "NotifyIFTTT": "ifttt",
                     "NotifyPushBullet": "pushbullet",
                     "NotifyZulip": "zulip",
-                    "NotifyXML": "xml"}[type(obj).__name__],
+                    "NotifyXML": "xml",
+                    "NotifyPagerDuty": "pagerduty"}[type(obj).__name__],
         "host": obj.host, "port": obj.port, "user": obj.user,
         "password": obj.password, "secure": obj.secure,
         "format": list(obj.notify_format) if isinstance(obj.notify_format, tuple)
@@ -168,6 +169,12 @@ def normalize(obj):
         base.update(method=obj.method, path=obj.fullpath, headers=obj.headers,
                     params=obj.params, payload=obj.payload_extras,
                     overrides=obj.payload_overrides, xsd_url=obj.xsd_url)
+    elif base["service"] == "pagerduty":
+        base.update(apikey=obj.apikey, integration_key=obj.integration_key,
+                    source=obj.source, component=obj.component,
+                    region_name=obj.region_name, severity=obj.severity,
+                    click=obj.click, class_id=obj.class_id, group=obj.group,
+                    include_image=obj.include_image, details=obj.details)
     elif base["service"] == "json":
         base.update(method=obj.method, path=obj.fullpath, headers=obj.headers,
                     params=obj.params, payload=obj.payload_extras)

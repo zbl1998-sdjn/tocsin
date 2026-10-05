@@ -10,7 +10,7 @@ use tocsin::{MockTransport, PreparedRequest, SecretString, Transport};
     reason = "the form and Pushover tests read bodies as text"
 )]
 use serde_json::{Value, json};
-#[cfg(any(feature = "json", feature = "slack"))]
+#[cfg(any(feature = "json", feature = "slack", feature = "pagerduty"))]
 use tocsin::Kind;
 #[cfg(any(feature = "json", feature = "form", feature = "xml"))]
 use tocsin::Method;
@@ -789,6 +789,54 @@ fn pushbullet_pushes_a_note_to_every_target() {
     assert_eq!(body(&requests[0])["device_iden"], json!("ALL_DEVICES"));
 }
 
+#[cfg(feature = "pagerduty")]
+#[test]
+fn pagerduty_triggers_an_event_with_the_kind_as_severity() {
+    let url = "pagerduty://rk@ak/mysource/mycomp?group=g&class=c&click=https://x/y&+k=v&severity=warn&region=eu";
+    let service: Service = url.parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].url.expose(),
+        "https://events.eu.pagerduty.com/v2/enqueue"
+    );
+    assert_eq!(
+        requests[0].headers["Authorization"].expose(),
+        "Token token=ak"
+    );
+    assert_eq!(
+        body(&requests[0]),
+        json!({
+            "routing_key": "rk",
+            "payload": {
+                "summary": "Title\r\nBody",
+                "severity": "warning",
+                "source": "mysource",
+                "component": "mycomp",
+                "group": "g",
+                "class": "c",
+                "custom_details": {"k": "v"},
+            },
+            "client": "tocsin",
+            "event_action": "trigger",
+            "links": [{"href": "https://x/y"}],
+        })
+    );
+
+    // Without options: the US server, the kind decides the severity.
+    let service: Service = "pagerduty://rk@ak".parse().expect("parse");
+    let failure = Notification::new("Body").kind(Kind::Failure);
+    let request = &service.prepare(&failure)[0];
+    assert_eq!(
+        request.url.expose(),
+        "https://events.pagerduty.com/v2/enqueue"
+    );
+    let payload = body(request);
+    assert_eq!(payload["payload"]["severity"], json!("critical"));
+    assert_eq!(payload["payload"]["component"], json!("Notification"));
+    assert!(payload.get("links").is_none());
+}
+
 #[cfg(feature = "xml")]
 #[test]
 fn xml_webhook_sends_apprises_soap_envelope() {
@@ -935,6 +983,7 @@ fn credentials_in_urls_never_show_up_in_formatting() {
         "pbul://FAKE_token/FAKE_device?to=FAKE_password",
         "zulip://FAKE_user@FAKE_org/FAKEtokenFAKEtokenFAKEtokenFAKE0/FAKE_stream?to=FAKE_password",
         "xml://FAKE_user:FAKE_password@127.0.0.1/FAKE_token?+X-Key=FAKE_query_token",
+        "pagerduty://FAKE_user@FAKE_token/FAKE_password?+key=FAKE_query_token",
     ] {
         if let Ok(service) = url.parse::<Service>() {
             let requests = service.prepare(&notification("body"));
