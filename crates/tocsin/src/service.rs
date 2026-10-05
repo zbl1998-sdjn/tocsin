@@ -12,7 +12,9 @@ enum Inner {
     #[cfg(feature = "discord")]
     Discord(crate::services::discord::Discord),
     #[cfg(feature = "ntfy")]
-    Ntfy(crate::services::ntfy::Ntfy),
+    // Ntfy and Pushover are boxed: they are far larger than the small services
+    // (Feishu is a token), and an enum is as large as its largest variant.
+    Ntfy(Box<crate::services::ntfy::Ntfy>),
     #[cfg(feature = "gotify")]
     Gotify(crate::services::gotify::Gotify),
     #[cfg(feature = "json")]
@@ -26,7 +28,7 @@ enum Inner {
     #[cfg(feature = "rocketchat")]
     RocketChat(crate::services::rocketchat::RocketChat),
     #[cfg(feature = "pushover")]
-    Pushover(crate::services::pushover::Pushover),
+    Pushover(Box<crate::services::pushover::Pushover>),
     #[cfg(feature = "slack")]
     Slack(crate::services::slack::Slack),
     #[cfg(feature = "prowl")]
@@ -117,7 +119,7 @@ impl Service {
                 .map(|(options, service)| Self::new(options, Inner::Discord(service))),
             #[cfg(feature = "ntfy")]
             "ntfy" | "ntfys" => crate::services::ntfy::parse(input)
-                .map(|(options, service)| Self::new(options, Inner::Ntfy(service))),
+                .map(|(options, service)| Self::new(options, Inner::Ntfy(Box::new(service)))),
             #[cfg(feature = "gotify")]
             "gotify" | "gotifys" => crate::services::gotify::parse(input)
                 .map(|(options, service)| Self::new(options, Inner::Gotify(service))),
@@ -138,7 +140,7 @@ impl Service {
                 .map(|(options, service)| Self::new(options, Inner::RocketChat(service))),
             #[cfg(feature = "pushover")]
             "pover" => crate::services::pushover::parse(input)
-                .map(|(options, service)| Self::new(options, Inner::Pushover(service))),
+                .map(|(options, service)| Self::new(options, Inner::Pushover(Box::new(service)))),
             #[cfg(feature = "slack")]
             "slack" => crate::services::slack::parse(input)
                 .map(|(options, service)| Self::new(options, Inner::Slack(service))),
