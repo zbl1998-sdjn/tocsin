@@ -5,22 +5,10 @@
 //! Apprise tries these only when the scheme is not one of its own, and so does
 //! tocsin. Each rewrite follows the plugin's `parse_native_url`.
 
-#[cfg(any(
-    feature = "discord",
-    feature = "ntfy",
-    feature = "workflows",
-    feature = "mattermost",
-    feature = "slack"
-))]
+#[cfg(feature = "_native")]
 use std::sync::LazyLock;
 
-#[cfg(any(
-    feature = "discord",
-    feature = "ntfy",
-    feature = "workflows",
-    feature = "mattermost",
-    feature = "slack"
-))]
+#[cfg(feature = "_native")]
 use regex::Regex;
 
 #[cfg(feature = "discord")]
@@ -64,6 +52,14 @@ static SLACK_HOOK: LazyLock<Regex> = LazyLock::new(|| {
     .expect("static regex")
 });
 
+#[cfg(feature = "ifttt")]
+static IFTTT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)^https?://maker\.ifttt\.com/use/(?P<webhook_id>[A-Z0-9_-]+)(?P<events>(?:/[A-Z0-9_-]+)+)?/?(?P<params>\?.+)?$",
+    )
+    .expect("static regex")
+});
+
 /// The notification URL for a web address, if a service claims it.
 #[allow(
     unused_variables,
@@ -76,6 +72,17 @@ pub(crate) fn rewrite(url: &str) -> Option<String> {
             "discord://{}/{}/{}",
             &found["id"],
             &found["token"],
+            found.name("params").map_or("", |m| m.as_str())
+        ));
+    }
+    #[cfg(feature = "ifttt")]
+    if let Some(found) = IFTTT.captures(url) {
+        let events = found
+            .name("events")
+            .map_or_else(String::new, |events| format!("@{}", events.as_str()));
+        return Some(format!(
+            "ifttt://{}{events}{}",
+            &found["webhook_id"],
             found.name("params").map_or("", |m| m.as_str())
         ));
     }

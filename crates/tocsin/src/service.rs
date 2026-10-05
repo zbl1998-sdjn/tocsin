@@ -31,6 +31,8 @@ enum Inner {
     Slack(crate::services::slack::Slack),
     #[cfg(feature = "prowl")]
     Prowl(crate::services::prowl::Prowl),
+    #[cfg(feature = "ifttt")]
+    Ifttt(crate::services::ifttt::Ifttt),
 }
 
 /// One notification destination, parsed from an Apprise-compatible URL such as
@@ -117,6 +119,9 @@ impl Service {
             #[cfg(feature = "prowl")]
             "prowl" => crate::services::prowl::parse(input)
                 .map(|(options, service)| Self::new(options, Inner::Prowl(service))),
+            #[cfg(feature = "ifttt")]
+            "ifttt" => crate::services::ifttt::parse(input)
+                .map(|(options, service)| Self::new(options, Inner::Ifttt(service))),
             _ => Err(ParseError::UnsupportedService),
         }
     }
@@ -154,6 +159,8 @@ impl Service {
             Inner::Slack(_) => "slack",
             #[cfg(feature = "prowl")]
             Inner::Prowl(_) => "prowl",
+            #[cfg(feature = "ifttt")]
+            Inner::Ifttt(_) => "ifttt",
         }
     }
 
@@ -203,6 +210,8 @@ impl Service {
             Inner::Slack(ref service) => service.prepare(&self.options, notification),
             #[cfg(feature = "prowl")]
             Inner::Prowl(ref service) => service.prepare(&self.options, notification),
+            #[cfg(feature = "ifttt")]
+            Inner::Ifttt(ref service) => service.prepare(&self.options, notification),
         }
     }
 
@@ -268,6 +277,8 @@ impl Service {
             Inner::Slack(ref service) => service.compat(&mut map),
             #[cfg(feature = "prowl")]
             Inner::Prowl(ref service) => service.compat(&mut map),
+            #[cfg(feature = "ifttt")]
+            Inner::Ifttt(ref service) => service.compat(&mut map),
         }
         serde_json::Value::Object(map)
     }

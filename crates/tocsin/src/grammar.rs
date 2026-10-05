@@ -276,7 +276,7 @@ impl Pairs {
         self.0.retain(|(k, _)| k != key);
     }
 
-    #[cfg(feature = "_pairs")]
+    #[cfg(feature = "_pairs_iter")]
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.0.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }

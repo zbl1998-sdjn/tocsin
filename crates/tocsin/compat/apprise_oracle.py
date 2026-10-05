@@ -82,7 +82,8 @@ def normalize(obj):
                     "NotifyRocketChat": "rocketchat",
                     "NotifyPushover": "pushover",
                     "NotifySlack": "slack",
-                    "NotifyProwl": "prowl"}[type(obj).__name__],
+                    "NotifyProwl": "prowl",
+                    "NotifyIFTTT": "ifttt"}[type(obj).__name__],
         "host": obj.host, "port": obj.port, "user": obj.user,
         "password": obj.password, "secure": obj.secure,
         "format": list(obj.notify_format) if isinstance(obj.notify_format, tuple)
@@ -138,6 +139,12 @@ def normalize(obj):
     elif base["service"] == "prowl":
         base.update(apikey=obj.apikey, providerkey=obj.providerkey,
                     priority=obj.priority)
+    elif base["service"] == "ifttt":
+        # The URL's +key and -key never reach the plugin: parse_url returns them
+        # as add_token and del_token, and __init__ reads add_tokens and
+        # del_tokens. tocsin applies them as documented, so they are not
+        # compared.
+        base.update(webhook_id=obj.webhook_id, events=obj.events)
     elif base["service"] == "mattermost":
         base.update(mode=obj.mode, token=obj.token, path=obj.fullpath,
                     targets=[list(t) for t in obj.targets],

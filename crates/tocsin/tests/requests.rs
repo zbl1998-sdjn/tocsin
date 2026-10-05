@@ -752,6 +752,47 @@ fn prowl_posts_a_form_to_the_public_api() {
     assert!(body.ends_with("&priority=0"), "{body}");
 }
 
+#[cfg(feature = "ifttt")]
+#[test]
+fn ifttt_triggers_every_event_with_the_three_values() {
+    let service: Service = "ifttt://hook@zeta/alpha".parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    // The events are sorted, and each gets a request.
+    let urls: Vec<_> = requests.iter().map(|r| r.url.expose().to_owned()).collect();
+    assert_eq!(
+        urls,
+        [
+            "https://maker.ifttt.com/trigger/alpha/with/key/hook",
+            "https://maker.ifttt.com/trigger/zeta/with/key/hook",
+        ]
+    );
+    assert_eq!(
+        body(&requests[0]),
+        json!({"value1": "Title", "value2": "Body", "value3": "info"})
+    );
+
+    // `+key=value` adds a field (in lower case, and it can replace a default),
+    // `-key` removes one, and the removal is matched against the key as written.
+    let url = "ifttt://hook@e?+Extra=Val&+Value1=Mine&-value3=&-Value2=";
+    let service: Service = url.parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(
+        body(&requests[0]),
+        json!({"value1": "Mine", "value2": "Body", "extra": "Val"})
+    );
+}
+
+#[cfg(feature = "ifttt")]
+#[test]
+fn ifttt_web_address_is_read_as_a_url() {
+    let service: Service = "https://maker.ifttt.com/use/hook/e1/e2?-value3="
+        .parse()
+        .expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 2);
+    assert!(body(&requests[0]).get("value3").is_none());
+}
+
 #[cfg(feature = "_services")]
 #[test]
 fn credentials_in_urls_never_show_up_in_formatting() {
@@ -768,6 +809,7 @@ fn credentials_in_urls_never_show_up_in_formatting() {
         "pover://FAKE_user@FAKE_token/FAKE_password?url=http://127.0.0.1/FAKE_query_token",
         "slack://FAKE_user@TFAKE/BFAKE/CFAKE/FAKE_password?:key=FAKE_query_token",
         "prowl://FAKE_user:FAKE_password@FAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKE0/FAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKE1",
+        "ifttt://FAKE_token@FAKE_event?+key=FAKE_query_token",
     ] {
         if let Ok(service) = url.parse::<Service>() {
             let requests = service.prepare(&notification("body"));

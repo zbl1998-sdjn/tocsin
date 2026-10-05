@@ -11,6 +11,8 @@ pub(crate) mod discord;
 pub(crate) mod form;
 #[cfg(feature = "gotify")]
 pub(crate) mod gotify;
+#[cfg(feature = "ifttt")]
+pub(crate) mod ifttt;
 #[cfg(feature = "json")]
 pub(crate) mod json;
 #[cfg(feature = "mattermost")]

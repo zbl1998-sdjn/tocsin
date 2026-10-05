@@ -18,7 +18,7 @@ default = ["all-services", "ureq"]
 # Every service tocsin supports.
 all-services = [
     "telegram", "discord", "ntfy", "gotify", "json", "form", "workflows",
-    "mattermost", "rocketchat", "pushover", "slack", "prowl",
+    "mattermost", "rocketchat", "pushover", "slack", "prowl", "ifttt",
 ]
 # A blocking HTTP transport.
 ureq = ["dep:ureq"]
@@ -30,20 +30,23 @@ compat = []
 # The services. Each lists the shared helpers it uses, which are the internal
 # features below; a helper is compiled only when a service that uses it is on.
 telegram = ["_services", "_sequence", "_lookups", "_multipart", "dep:regex", "_list", "_flag", "_to_map", "_paths", "_payload", "_any_host", "_format", "_merged"]
-discord = ["_services", "_multipart", "dep:regex", "_token", "_list", "_flag", "_raw_optional", "_to_map", "_paths", "_payload", "_any_host", "_parts"]
-ntfy = ["_services", "dep:regex", "dep:base64", "_pairs", "_verify", "_list", "_flag", "_raw_optional", "_paths", "_optional_host", "_parts"]
+discord = ["_services", "_native", "_multipart", "dep:regex", "_token", "_list", "_flag", "_raw_optional", "_to_map", "_paths", "_payload", "_any_host", "_parts"]
+ntfy = ["_services", "_native", "dep:regex", "dep:base64", "_pairs", "_verify", "_list", "_flag", "_raw_optional", "_paths", "_optional_host", "_parts"]
 gotify = ["_services", "_token", "_verify", "_paths", "_parts"]
 json = ["_services", "_webhook", "_parts"]
 form = ["_services", "_webhook", "_multipart", "dep:regex", "_parts"]
-workflows = ["_services", "_validate", "_query", "_verify", "_flag", "_to_map", "_paths", "_payload", "_parts"]
-mattermost = ["_services", "_sequence", "_lookups", "_multipart", "dep:regex", "_token", "_verify", "_quote", "_list", "_flag", "_paths", "_format", "_merged"]
+workflows = ["_services", "_native", "_validate", "_query", "_verify", "_flag", "_to_map", "_paths", "_payload", "_parts"]
+mattermost = ["_services", "_native", "_sequence", "_lookups", "_multipart", "dep:regex", "_token", "_verify", "_quote", "_list", "_flag", "_paths", "_format", "_merged"]
 rocketchat = ["_services", "_sequence", "dep:regex", "_verify", "_query", "_list", "_flag", "_paths", "_format", "_merged"]
 pushover = ["_services", "_multipart", "dep:regex", "_token", "_pairs", "_list", "_flag", "_paths", "_any_host", "_format", "_parts"]
+ifttt = ["_services", "_native", "_token", "_pairs_iter", "_quote", "_list", "_optional_host", "_parts"]
 prowl = ["_services", "_validate", "_pairs", "_paths", "_any_host", "_parts"]
-slack = ["_services", "_sequence", "_lookups", "_multipart", "_validate", "_query", "_list", "_flag", "_to_map", "_paths", "_payload", "_optional_host", "_format", "_parts"]
+slack = ["_services", "_native", "_sequence", "_lookups", "_multipart", "_validate", "_query", "_list", "_flag", "_to_map", "_paths", "_payload", "_optional_host", "_format", "_parts"]
 
 # Internal features. Set by every service.
 _services = []
+# Web addresses that a service gives you, which are read as its URLs.
+_native = ["dep:regex"]
 # Requests that depend on the answer to an earlier one.
 _sequence = []
 # Looking names up before anything is sent.
@@ -60,8 +63,10 @@ _query = []
 _quote = []
 # `multipart/form-data` bodies, for services that upload files.
 _multipart = []
-# The same for a list of key and value pairs.
-_pairs = ["_query"]
+# Reading a list of key and value pairs.
+_pairs_iter = []
+# The same, and encoding them the way `requests` does.
+_pairs = ["_query", "_pairs_iter"]
 # What the JSON and form webhooks share.
 _webhook = ["_pairs", "dep:base64", "_verify", "_payload"]
 # Shared helpers of the URL grammar and of message handling.
