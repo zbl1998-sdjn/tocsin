@@ -13,7 +13,6 @@
 
 use std::fmt::Write as _;
 
-use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::json;
 
 use crate::{
@@ -188,18 +187,6 @@ impl Bark {
             write!(url, ":{port}").expect("writing to a String works");
         }
         url.push_str("/push");
-        let authorization = options
-            .user
-            .as_deref()
-            .filter(|user| !user.is_empty())
-            .map(|user| {
-                // A URL with a user and no password sends an empty password.
-                let password = options.password.as_ref().map_or("", SecretString::expose);
-                SecretString::new(format!(
-                    "Basic {}",
-                    STANDARD.encode(format!("{user}:{password}"))
-                ))
-            });
         let markdown = matches!(options.format, FormatMode::Fixed(Format::Markdown));
         let mut requests = Vec::new();
         for (title, body) in message::parts(notification, 250, 32768, options.overflow) {
@@ -230,13 +217,9 @@ impl Bark {
                 if self.call {
                     payload["call"] = json!(1);
                 }
-                let mut request =
-                    PreparedRequest::json(&url, &payload).with_policy(options.policy());
-                if let Some(authorization) = &authorization {
-                    request
-                        .headers
-                        .insert("Authorization".to_owned(), authorization.clone());
-                }
+                let request = PreparedRequest::json(&url, &payload)
+                    .with_policy(options.policy())
+                    .with_basic_auth(options);
                 requests.push(request);
             }
         }

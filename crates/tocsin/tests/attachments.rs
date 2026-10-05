@@ -6,10 +6,11 @@
     feature = "pushover",
     feature = "telegram",
     feature = "discord",
-    feature = "xml"
+    feature = "xml",
+    feature = "signal"
 ))]
 
-#[cfg(any(feature = "json", feature = "ntfy"))]
+#[cfg(any(feature = "json", feature = "ntfy", feature = "signal"))]
 use serde_json::{Value, json};
 use tocsin::{Attachment, Notification, Service};
 
@@ -22,7 +23,8 @@ fn service(url: &str) -> Service {
     feature = "form",
     feature = "ntfy",
     feature = "pushover",
-    feature = "xml"
+    feature = "xml",
+    feature = "signal"
 ))]
 fn text(content: &str) -> Attachment {
     Attachment::new("a.txt", content.as_bytes().to_vec())
@@ -686,4 +688,19 @@ fn xml_webhook_carries_attachments_as_base64_elements() {
     assert_eq!(requests.len(), 2);
     assert!(requests[0].body.text().contains("<Attachments"));
     assert!(!requests[1].body.text().contains("<Attachments"));
+}
+
+#[cfg(feature = "signal")]
+#[test]
+fn signal_sends_every_file_as_base64_with_the_first_part_only() {
+    let notification = Notification::new("word ".repeat(8000))
+        .attach(text("hello"))
+        .attach(text("x"));
+    let requests = service("signal://localhost/+15551234567?overflow=split").prepare(&notification);
+    assert_eq!(requests.len(), 2);
+    let body = |at: usize| -> Value {
+        serde_json::from_str(&requests[at].body.text()).expect("JSON body")
+    };
+    assert_eq!(body(0)["base64_attachments"], json!(["aGVsbG8=", "eA=="]));
+    assert!(body(1).get("base64_attachments").is_none());
 }

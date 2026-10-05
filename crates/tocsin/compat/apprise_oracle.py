@@ -89,7 +89,8 @@ def normalize(obj):
                     "NotifyXML": "xml",
                     "NotifyPagerDuty": "pagerduty",
                     "NotifyGoogleChat": "gchat",
-                    "NotifyBark": "bark"}[type(obj).__name__],
+                    "NotifyBark": "bark",
+                    "NotifySignalAPI": "signal"}[type(obj).__name__],
         "host": obj.host, "port": obj.port, "user": obj.user,
         "password": obj.password, "secure": obj.secure,
         "format": list(obj.notify_format) if isinstance(obj.notify_format, tuple)
@@ -192,6 +193,10 @@ def normalize(obj):
                     level=obj.level, click=obj.click, badge=obj.badge,
                     volume=volume, icon=obj.icon, call=obj.call,
                     encryption_key=obj.encryption_key)
+    elif base["service"] == "signal":
+        base.update(source=obj.source, targets=list(obj.targets),
+                    invalid_targets=list(obj.invalid_targets), batch=obj.batch,
+                    status=obj.status)
     elif base["service"] == "json":
         base.update(method=obj.method, path=obj.fullpath, headers=obj.headers,
                     params=obj.params, payload=obj.payload_extras)

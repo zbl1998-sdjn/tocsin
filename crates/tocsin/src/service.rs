@@ -45,6 +45,8 @@ enum Inner {
     GoogleChat(crate::services::gchat::GoogleChat),
     #[cfg(feature = "bark")]
     Bark(crate::services::bark::Bark),
+    #[cfg(feature = "signal")]
+    SignalApi(crate::services::signal::SignalApi),
 }
 
 /// One notification destination, parsed from an Apprise-compatible URL such as
@@ -152,6 +154,9 @@ impl Service {
             #[cfg(feature = "bark")]
             "bark" | "barks" => crate::services::bark::parse(input)
                 .map(|(options, service)| Self::new(options, Inner::Bark(service))),
+            #[cfg(feature = "signal")]
+            "signal" | "signals" => crate::services::signal::parse(input)
+                .map(|(options, service)| Self::new(options, Inner::SignalApi(service))),
             _ => Err(ParseError::UnsupportedService),
         }
     }
@@ -203,6 +208,8 @@ impl Service {
             Inner::GoogleChat(_) => "gchat",
             #[cfg(feature = "bark")]
             Inner::Bark(_) => "bark",
+            #[cfg(feature = "signal")]
+            Inner::SignalApi(_) => "signal",
         }
     }
 
@@ -266,6 +273,8 @@ impl Service {
             Inner::GoogleChat(ref service) => service.prepare(&self.options, notification),
             #[cfg(feature = "bark")]
             Inner::Bark(ref service) => service.prepare(&self.options, notification),
+            #[cfg(feature = "signal")]
+            Inner::SignalApi(ref service) => service.prepare(&self.options, notification),
         }
     }
 
@@ -347,6 +356,8 @@ impl Service {
             Inner::GoogleChat(ref service) => service.compat(&mut map),
             #[cfg(feature = "bark")]
             Inner::Bark(ref service) => service.compat(&mut map),
+            #[cfg(feature = "signal")]
+            Inner::SignalApi(ref service) => service.compat(&mut map),
         }
         serde_json::Value::Object(map)
     }

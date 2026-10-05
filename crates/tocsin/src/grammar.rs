@@ -75,7 +75,7 @@ pub(crate) fn encode(s: &str) -> String {
 }
 
 /// Python's `str.isspace` also counts the four information-separator controls.
-fn is_python_space(c: char) -> bool {
+pub(crate) fn is_python_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 

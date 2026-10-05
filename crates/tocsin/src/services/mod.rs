@@ -33,6 +33,8 @@ pub(crate) mod pushbullet;
 pub(crate) mod pushover;
 #[cfg(feature = "rocketchat")]
 pub(crate) mod rocketchat;
+#[cfg(feature = "signal")]
+pub(crate) mod signal;
 #[cfg(feature = "slack")]
 pub(crate) mod slack;
 #[cfg(feature = "telegram")]

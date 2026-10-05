@@ -1107,6 +1107,100 @@ fn bark_splits_a_long_message_when_asked_to() {
     assert_eq!(sent, 40000);
 }
 
+#[cfg(feature = "signal")]
+#[test]
+fn signal_sends_a_request_per_recipient_with_the_title_in_front() {
+    let service: Service =
+        "signals://user:pw@localhost:8443/%2B15551234567/%2B15557654321/@group.abc\
+        ?status=yes&format=markdown"
+            .parse()
+            .expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 2);
+    for request in &requests {
+        assert_eq!(request.url.expose(), "https://localhost:8443/v2/send");
+        // "user:pw"
+        assert_eq!(
+            request.headers["Authorization"].expose(),
+            "Basic dXNlcjpwdw=="
+        );
+    }
+    assert_eq!(
+        body(&requests[0]),
+        json!({
+            "message": "[i] # Title\nBody",
+            "number": "+15551234567",
+            "text_mode": "styled",
+            "recipients": ["+15557654321"],
+        })
+    );
+    assert_eq!(body(&requests[1])["recipients"], json!(["group.abc"]));
+}
+
+#[cfg(feature = "signal")]
+#[test]
+fn signal_without_targets_writes_to_the_sender_and_batches_on_request() {
+    let service: Service = "signal://localhost/+15551234567".parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].url.expose(), "http://localhost/v2/send");
+    assert!(!requests[0].headers.contains_key("Authorization"));
+    assert_eq!(
+        body(&requests[0]),
+        json!({
+            "message": "Title\r\nBody",
+            "number": "+15551234567",
+            "text_mode": "normal",
+            "recipients": ["+15551234567"],
+        })
+    );
+
+    // Twelve recipients make a batch of ten and a batch of two.
+    let numbers: Vec<String> = (0..12).map(|n| format!("+155500000{n:02}")).collect();
+    let url = format!(
+        "signal://localhost/+15551234567/{}?batch=yes",
+        numbers.join("/")
+    );
+    let service: Service = url.parse().expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    let sizes: Vec<usize> = requests
+        .iter()
+        .map(|request| body(request)["recipients"].as_array().expect("list").len())
+        .collect();
+    assert_eq!(sizes, [10, 2]);
+}
+
+#[cfg(feature = "signal")]
+#[test]
+fn signal_sends_nothing_without_a_valid_recipient() {
+    // 123 is neither a number nor a group.
+    let service: Service = "signal://localhost/+15551234567/123"
+        .parse()
+        .expect("parse");
+    assert!(service.prepare(&notification("Body")).is_empty());
+    // A source that is not a number is not a Signal URL.
+    assert!("signal://localhost/123".parse::<Service>().is_err());
+    assert!("signal://localhost".parse::<Service>().is_err());
+}
+
+#[cfg(feature = "signal")]
+#[test]
+fn signal_finds_numbers_the_way_apprise_does() {
+    // The look-ahead after a number wants another number, so the group and the
+    // second number are lost, as they are in Apprise.
+    let service: Service = "signal://localhost/+15551234567?to=%2B15557654321,%2B15553334444,@grp"
+        .parse()
+        .expect("parse");
+    let requests = service.prepare(&notification("Body"));
+    assert_eq!(requests.len(), 1);
+    assert_eq!(body(&requests[0])["recipients"], json!(["+15557654321"]));
+    // Written one to a path element, they all count.
+    let service: Service = "signal://localhost/+15551234567/+15557654321/+15553334444/@grp"
+        .parse()
+        .expect("parse");
+    assert_eq!(service.prepare(&notification("Body")).len(), 3);
+}
+
 #[cfg(feature = "_services")]
 #[test]
 fn credentials_in_urls_never_show_up_in_formatting() {
@@ -1131,6 +1225,7 @@ fn credentials_in_urls_never_show_up_in_formatting() {
         "gchat://FAKE_id/FAKE_token/FAKE_password/FAKE_query_token",
         "bark://FAKE_user:FAKE_password@127.0.0.1/FAKE_token?group=FAKE_query_token",
         "bark://FAKE_user:FAKE_password@127.0.0.1/FAKE_token?key=FAKE_query_token",
+        "signal://FAKE_user:FAKE_password@127.0.0.1/+15550001111/+15550002222?to=FAKE_query_token",
     ] {
         if let Ok(service) = url.parse::<Service>() {
             let requests = service.prepare(&notification("body"));

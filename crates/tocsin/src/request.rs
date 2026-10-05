@@ -130,6 +130,25 @@ impl PreparedRequest {
         self
     }
 
+    /// Send the user and password of the URL as basic authentication. A user
+    /// without a password sends an empty one, where Apprise sends the text
+    /// `None`.
+    #[cfg(feature = "_basic")]
+    #[must_use]
+    pub(crate) fn with_basic_auth(mut self, options: &crate::options::Options) -> Self {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+
+        if let Some(user) = options.user.as_deref().filter(|user| !user.is_empty()) {
+            let password = options.password.as_ref().map_or("", SecretString::expose);
+            let credentials = STANDARD.encode(format!("{user}:{password}"));
+            self.headers.insert(
+                "Authorization".to_owned(),
+                SecretString::new(format!("Basic {credentials}")),
+            );
+        }
+        self
+    }
+
     /// `METHOD scheme://host[:port]`, without path, query, credentials,
     /// headers or body. Meant for dry-run output on the user's own terminal:
     /// the host is **not** redacted, so do not send this to shared logs.
