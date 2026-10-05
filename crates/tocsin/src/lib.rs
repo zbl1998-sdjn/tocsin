@@ -3,7 +3,7 @@
 //! tocsin reads the notification URLs of [Apprise](https://github.com/caronc/apprise)
 //! (`tgram://...`, `slack://...`, `ntfy://...`) and turns them into HTTP
 //! requests. Its URL parser is checked against Apprise itself: the test suite
-//! compares every field of nearly 400 URLs with what Apprise parses.
+//! compares every field of more than 600 URLs with what Apprise parses.
 //!
 //! # Send a notification
 //!
@@ -28,27 +28,58 @@
 //! # fn main() {}
 //! ```
 //!
+//! # Send files
+//!
+//! ```
+//! # #[cfg(feature = "json")]
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use tocsin::{Attachment, MockTransport, Notification, Notifier};
+//!
+//! let mut notifier = Notifier::new();
+//! notifier.add("json://localhost/hook")?;
+//!
+//! let notification = Notification::new("The report is ready")
+//!     .attach(Attachment::new("report.txt", b"all good".to_vec()));
+//! let mut transport = MockTransport::default();
+//! assert!(notifier.send(&notification, &mut transport).is_success());
+//!
+//! // The JSON webhook carries the file as base64.
+//! assert!(transport.requests[0].body.text().contains("YWxsIGdvb2Q="));
+//! # Ok(())
+//! # }
+//! # #[cfg(not(feature = "json"))]
+//! # fn main() {}
+//! ```
+//!
 //! # Use your own HTTP client
 //!
-//! [`Service::prepare`] does no I/O, so an async application can build the
-//! requests here and send them with `reqwest` or any other client.
+//! A [`Plan`] does no I/O. It hands out one request at a time and asks how each
+//! one went, so any client, blocking or async, can send them. Some services need
+//! the answer to one request to build the next (a login, a channel lookup, an
+//! upload address), which is why it is not just a list.
 //!
 //! ```
 //! # #[cfg(feature = "ntfy")]
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use tocsin::{Notification, Service};
+//! use tocsin::{Notification, Response, Service};
 //!
 //! let service: Service = "ntfys://user:password@ntfy.example.com/alerts".parse()?;
-//! for request in service.prepare(&Notification::new("Disk almost full")) {
+//! let mut plan = service.plan(&Notification::new("Disk almost full"));
+//! while let Some(request) = plan.next_request() {
 //!     // Send `request.method`, `request.url.expose()`, `request.headers` and
-//!     // `request.body.expose()` with your client.
+//!     // `request.body.expose()` with your client, then say how it went.
 //!     assert_eq!(request.summary(), "POST https://ntfy.example.com");
+//!     plan.report(Ok(Response::new(200)));
 //! }
+//! assert_eq!(plan.finish().len(), 1);
 //! # Ok(())
 //! # }
 //! # #[cfg(not(feature = "ntfy"))]
 //! # fn main() {}
 //! ```
+//!
+//! [`Service::prepare`] is the list form, for the services that never need an
+//! answer first. The `tocsin-reqwest` crate sends plans from async code.
 //!
 //! With the `http` feature a request also converts to an [`http::Request`], which
 //! `hyper` takes as it is and `reqwest` takes through

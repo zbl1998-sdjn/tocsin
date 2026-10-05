@@ -235,3 +235,15 @@ async fn a_connection_that_fails_is_a_failure_without_details() {
     );
     assert!(!format!("{report:?}").contains(secret));
 }
+
+/// A task that is spawned on a multi-threaded runtime has to be `Send`.
+#[test]
+fn sending_can_be_spawned_on_a_multi_threaded_runtime() {
+    fn assert_send<T: Send>(_: &T) {}
+
+    let notifier = notifier("json://127.0.0.1:1/hook");
+    let notification = Notification::new("x");
+    let mut transport = ReqwestTransport::new();
+    let future = notifier.send_async(&notification, &mut transport);
+    assert_send(&future);
+}

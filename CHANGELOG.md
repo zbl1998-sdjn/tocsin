@@ -6,35 +6,67 @@ follows [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-05
+
+This release adds attachments, an async transport, seven more services, and the
+answers that some services need before the next request. It breaks the API in
+three places, listed first.
+
 ### Changed (breaking)
 
 - `Service::plan` returns a `Plan`, a state machine that hands out the next
   request and reads the result, for deliveries in which a request depends on the
-  answer to the one before. `Notifier::send` uses it.
+  answer to the one before. `Notifier::send` uses it. `Service::prepare` still
+  builds the requests that need no answer.
 - Request and response bodies are bytes. `PreparedRequest::body` is a
   `SecretBytes` (redacted in `Debug` and `Display`), and the `http` feature
   converts to `http::Request<Vec<u8>>`.
 - `Response` carries the start of the response body (`UreqTransport` keeps up to
   1 MiB), is no longer `Copy`, and is `#[non_exhaustive]`. `Outcome` and
-  `Receipt` are no longer `Copy`.
-- `TransportError::InvalidResponse` is new: a service answered, but not in a way
-  the next request could be built from.
+  `Receipt` are no longer `Copy`. `Notification` has an `attachments` field.
+- `TransportError` has two new variants: `InvalidResponse` (a service answered,
+  but not in a way the next request could be built from) and `Rejected` (it
+  answered without an error status but said it did not take the message, as
+  Slack does with `"ok": false`).
 
 ### Added
 
-- `Notifier::send_async` and the `AsyncTransport` trait, for clients that do not
-  block. `MockTransport` implements both transports.
+- Attachments. `Notification::attach` takes an `Attachment` (a name, a media
+  type guessed from the extension, and the bytes). Telegram, Discord, ntfy,
+  Pushover, Pushbullet, Mattermost (bot), Slack (bot), and the JSON, XML and
+  form webhooks send them, the way Apprise does. A file goes with the first part
+  of a long message, and `overflow=truncate` keeps only the first file. A file
+  that a service would refuse is a failure in the report.
+- `tocsin --attach FILE` (repeatable); a file can be the whole message.
+- `Notifier::send_async` and the `AsyncTransport` trait. `MockTransport`
+  implements both transports.
+- The `tocsin-reqwest` crate: `ReqwestTransport`, an `AsyncTransport` built on
+  reqwest 0.13.
+- Seven services, each with at least 30 URLs compared against Apprise: Prowl,
+  IFTTT (and the `maker.ifttt.com/use` address), Pushbullet, Zulip, an XML
+  webhook, PagerDuty and Google Chat (and the `chat.googleapis.com` address).
 - Rocket.Chat `basic` mode (user name and password): log in, post to every
   target, log out.
 - Mattermost bot mode: channels written as names are looked up in the team
   before posting.
 - Slack bot mode: e-mail address targets are resolved to users first.
 - Telegram without a chat id (`detect`): the bot is asked who wrote to it last.
-- `TransportError::Rejected`: Slack answered `200` but not with the `ok` that
-  Apprise requires (the webhook text `ok`, or `"ok": true` from the Web API), so
-  the message is reported as not delivered.
-- A Slack target that cannot be used is a failure in the report instead of being
-  skipped without a word.
+- ntfy sends `tags` (`X-Tags`), `attach` and `filename`.
+- Slack reads the answer, as Apprise does: a webhook has to answer `ok` and the
+  Web API has to say `"ok": true`, otherwise the message is reported as
+  rejected. A Slack target that cannot be used is a failure in the report
+  instead of being skipped without a word.
+
+### Notes
+
+- Files, lookups, logins and detection only work through `Service::plan` (and so
+  through `Notifier`); `prepare` returns what it can without them.
+- IFTTT's `+key` and `-key` work as documented. Apprise's URL never applies them
+  (a naming mismatch inside its plugin), so the differential test leaves them out.
+- A dry run of the command line does not count the requests that depend on an
+  answer as failures.
+- The bot token of Slack and Pushbullet is not sent to the upload address that
+  the service returns, unlike Apprise.
 
 ## [0.1.0] - 2026-10-05
 
@@ -74,5 +106,6 @@ both on crates.io.
 - No attachments, body format conversion, retries or built-in async transport
   (the `http` feature hands requests to one).
 
-[Unreleased]: https://github.com/zbl1998-sdjn/tocsin/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/zbl1998-sdjn/tocsin/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/zbl1998-sdjn/tocsin/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/zbl1998-sdjn/tocsin/releases/tag/v0.1.0

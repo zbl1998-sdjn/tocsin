@@ -66,29 +66,33 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-hack
+      # The features that start with an underscore are helpers that a service
+      # switches on; they are left out of the combinations.
+      - name: List the internal features
+        run: echo "INTERNAL=$(sed -n 's/^\(_[a-z_]*\) *=.*/\1/p' crates/tocsin/Cargo.toml | paste -sd, -)" >> "$GITHUB_ENV"
       - name: Clippy for every feature combination
         run: >
           cargo hack clippy -p tocsin --all-targets
           --feature-powerset --depth 2
-          --exclude-features all-services,compat,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
+          --exclude-features all-services,compat,${{ env.INTERNAL }}
           -- -D warnings
       - name: Tests for every feature combination
         run: >
           cargo hack test -p tocsin
           --feature-powerset --depth 2
-          --exclude-features all-services,compat,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
+          --exclude-features all-services,compat,${{ env.INTERNAL }}
 
       - name: Clippy with the compat feature for each service
         run: >
           cargo hack clippy -p tocsin --all-targets
           --features compat --each-feature
-          --exclude-features all-services,ureq,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
+          --exclude-features all-services,ureq,${{ env.INTERNAL }}
           -- -D warnings
       - name: Differential tests with each service alone
         run: >
           cargo hack test -p tocsin --test compat
           --features compat --each-feature
-          --exclude-features all-services,ureq,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
+          --exclude-features all-services,ureq,${{ env.INTERNAL }}
 
   msrv:
     runs-on: ubuntu-latest
@@ -106,7 +110,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo doc -p tocsin --no-deps --all-features
+      - run: cargo doc -p tocsin -p tocsin-reqwest --no-deps --all-features
 
   # The expected Apprise answers in crates/tocsin/compat/oracle.json must be
   # exactly what Apprise 81739e9 prints for crates/tocsin/compat/fixtures.json.

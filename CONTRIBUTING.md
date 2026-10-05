@@ -12,20 +12,20 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
-Every service is a feature, so also check the builds that leave one out:
+Every service is a feature, so also check the builds that leave one out. The
+features that start with an underscore are internal helpers that a service
+switches on, so they are left out of the combinations:
 
 ```sh
 cargo install cargo-hack
+internal=$(sed -n 's/^\(_[a-z_]*\) *=.*/\1/p' crates/tocsin/Cargo.toml | paste -sd, -)
 cargo hack clippy -p tocsin --all-targets --no-default-features \
   --feature-powerset --depth 2 \
-  --exclude-features all-services,compat,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts -- -D warnings
+  --exclude-features all-services,compat,$internal -- -D warnings
 cargo hack test -p tocsin --no-default-features \
   --feature-powerset --depth 2 \
-  --exclude-features all-services,compat,_services,_token,_validate,_verify,_query,_pairs,_webhook,_list,_flag,_raw_optional,_to_map,_paths,_payload,_any_host,_optional_host,_format,_merged,_parts
+  --exclude-features all-services,compat,$internal
 ```
-
-The features that start with an underscore are internal helpers that a service
-switches on, so they are left out of the combinations.
 
 `TOCSIN_FUZZ_ROUNDS=4000 cargo test -p tocsin --all-features --test robustness`
 damages each fixture URL that many times and checks that nothing panics; the
@@ -51,14 +51,21 @@ Start from `src/services/gotify.rs`, the smallest one, or from
    any optional dependency. Add it to `all-services`.
 3. **Write `src/services/<name>.rs`** with a `pub(crate) fn parse(input: &str)
    -> Result<(Options, Service), ParseError>`, a `prepare(&self, &Options,
-   &Notification) -> Vec<PreparedRequest>` method and, behind
+   &Notification) -> Vec<PreparedRequest>` method and, when a request needs the
+   answer to an earlier one (a login, a lookup, an upload address), a
+   `plan(&self, &Options, &Notification) -> Plan` method built from the
+   sequences in `src/plan.rs` (`Lookups` for the common case of looking names
+   up before sending, see `mattermost.rs`). Add, behind
    `#[cfg(feature = "compat")]`, a `compat(&self, &mut Map)` method that lists
    the parsed fields. Wrap tokens and anything else secret in `SecretString`.
+   For files, `notification.carried(options.overflow)` is what to send, with the
+   first part of the message only, and `multipart.rs` writes a multipart body.
    `grammar::parse` takes how the host is checked (`Hosts::Verified` for a real
    host name, `Any` for an id or token in its place, `Optional` when it may be
    missing); use the one Apprise's plugin uses (`verify_host`).
 4. **Register it**: `src/services/mod.rs`, the `Inner` enum and the scheme match
-   in `src/service.rs` (`name`, `prepare` and `compat_fields` too). If the
+   in `src/service.rs` (`name`, `prepare` and `compat_fields` too, and `plan` if
+   the service has one). If the
    plugin has a `parse_native_url`, add the same rewrite to `src/native.rs`.
 5. **Add at least 30 fixtures** to `crates/tocsin/compat/fixtures.json` with a
    short id prefix (`gf01`...). Take the URLs from
@@ -87,6 +94,8 @@ Start from `src/services/gotify.rs`, the smallest one, or from
 8. **Add golden tests** in `crates/tocsin/tests/requests.rs`: the exact URL,
    headers and body of a request, written from the provider's documentation,
    and the new service's URL in `credentials_in_urls_never_show_up_in_formatting`.
+   Tests of files go in `tests/attachments.rs` and tests of services that need
+   answers in `tests/plans.rs`, which has a scripted transport.
 9. **Run the feature checks above.** A helper that no service of a build uses is
    dead code there; declare it in the service's feature list rather than
    silencing the warning.
