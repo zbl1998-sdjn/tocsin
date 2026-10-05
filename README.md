@@ -49,6 +49,10 @@ Four more things it tries to do well:
 
 ## Command line
 
+Download a binary for Linux, macOS or Windows from the
+[releases](https://github.com/zbl1998-sdjn/tocsin/releases/latest) (each has a
+`.sha256` file), or build it:
+
 ```sh
 cargo install tocsin-cli                 # installs `tocsin`
 
